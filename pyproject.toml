@@ -1,0 +1,72 @@
+[project]
+name = "cachelint"
+version = "0.1.0"
+description = "Explain why your LLM prompt cache missed: prefix diffs, silent invalidators and hit-rate accounting for Anthropic and OpenAI."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Aslan Osmanov", email = "osmnvaslan@gmail.com" }]
+requires-python = ">=3.11"
+dependencies = []
+keywords = ["llm", "prompt-caching", "anthropic", "openai", "cache", "tokens", "cost", "observability"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Quality Assurance",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/OsmnvAslan/cachelint"
+Repository = "https://github.com/OsmnvAslan/cachelint"
+Issues = "https://github.com/OsmnvAslan/cachelint/issues"
+Changelog = "https://github.com/OsmnvAslan/cachelint/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+httpx = ["httpx>=0.27"]
+
+[project.scripts]
+cachelint = "cachelint.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.24",
+  "mypy>=1.11",
+  "ruff>=0.6",
+  "httpx>=0.27",
+  "httpx2>=2.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cachelint"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".github", ".python-version", "uv.lock"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
