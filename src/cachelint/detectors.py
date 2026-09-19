@@ -70,7 +70,7 @@ def volatile_content(segments: list[Segment], cacheable: int) -> list[F.Finding]
                 F.Finding(
                     code=F.VOLATILE_CONTENT,
                     severity="warning",
-                    message=f"{pat.name} inside the cacheable prefix at {seg.path}",
+                    message=f"{pat.name} inside the cacheable prefix",
                     hint=pat.hint,
                     path=seg.path,
                     offset=m.start(),

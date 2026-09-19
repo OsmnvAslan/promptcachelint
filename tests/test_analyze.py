@@ -43,6 +43,8 @@ def test_timestamp_in_system_breaks_prefix_and_is_flagged() -> None:
     report = analyze([rec(a, 1.0, usage=Usage(5, 0, 1600)), rec(b, 2.0, usage=Usage(1600, 0, 0))])
     found = codes(report.findings)
     assert F.PREFIX_BROKEN in found and F.VOLATILE_CONTENT in found
+    assert F.WRITE_WITHOUT_READ not in found
+    assert sum(f.code == F.VOLATILE_CONTENT for f in report.findings) == 1  # once per session
     broken = next(f for f in report.findings if f.code == F.PREFIX_BROKEN)
     assert broken.path == "system[0]"
     assert broken.offset == len(LONG) + len(" Now: 2026-09-20T10:1")

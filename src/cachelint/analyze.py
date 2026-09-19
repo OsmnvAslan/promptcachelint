@@ -157,6 +157,7 @@ def analyze(records: Iterable[Record], *, index: SessionIndex | None = None) -> 
     index = index or SessionIndex()
     sessions: dict[str, SessionReport] = {}
     last: dict[str, RequestReport] = {}
+    static_seen: dict[str, set[tuple[str, str | None]]] = {}
 
     for record in sorted(records, key=lambda r: r.at):
         provider = get_provider(record.provider)
@@ -167,8 +168,16 @@ def analyze(records: Iterable[Record], *, index: SessionIndex | None = None) -> 
 
         prev = last.get(sid)
         diff = None
-        findings: list[F.Finding] = structure(provider, record.body, segments, cacheable)
-        findings += volatile_content(segments, cacheable)
+        static = structure(provider, record.body, segments, cacheable)
+        static += volatile_content(segments, cacheable)
+        # A static problem is reported once per session, not on every turn.
+        seen = static_seen.setdefault(sid, set())
+        findings: list[F.Finding] = []
+        for f in static:
+            key = (f.code, f.path)
+            if key not in seen:
+                seen.add(key)
+                findings.append(f)
         if prev is not None:
             diff = diff_prefix(prev.segments, segments, prev.cacheable)
             findings += _session_findings(provider, prev, record, segments, cacheable, diff)
@@ -297,8 +306,10 @@ def _session_findings(
         )
 
     usage = record.usage
+    tail_only = not diff.broken or diff.kind == "message"
     if (
-        usage is not None
+        tail_only
+        and usage is not None
         and prev.usage is not None
         and prev.cacheable > 0
         and usage.cache_write > 0
