@@ -83,8 +83,9 @@ def _lint(args: argparse.Namespace) -> int:
         minimum = provider.min_prefix_tokens(body.get("model"))
         if total < minimum:
             print(
-                f"promptcachelint: no findings (prompt is ~{total} tokens, below the {minimum}-token "
-                "cacheable minimum for this model; nothing here can be cached either way)"
+                f"promptcachelint: no findings (prompt is ~{total} tokens, below the "
+                f"{minimum}-token cacheable minimum for this model; nothing here can be "
+                "cached either way)"
             )
         else:
             print("promptcachelint: no findings")
