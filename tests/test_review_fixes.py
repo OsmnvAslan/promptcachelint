@@ -273,7 +273,8 @@ def test_redaction_helpers() -> None:
 
     hashed = hash_text(body)
     assert hashed["system"][0]["text"].startswith("sha256:")
-    assert hashed["messages"][0]["content"][0]["text"].startswith("sha256:")
+    short = hashed["messages"][0]["content"][0]["text"]  # "hello": same length, still hidden
+    assert len(short) == 5 and short != "hello"
     assert hashed["system"][0]["cache_control"] == {"type": "ephemeral"}
 
 

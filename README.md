@@ -12,20 +12,19 @@ history: timestamps in the system prompt, a missing marker, a prefix below
 the model's minimum.
 
 ```
-cachelint: 3 requests in 1 session(s); prompt tokens 4880 (read 0, write 4806, uncached 74);
-hit ratio 0.0%; 2 prefix break(s), ~3096 tokens lost (estimate)
+cachelint: 3 requests in 1 session(s); prompt tokens 4880 (read 0, write 4806, uncached 74); hit ratio 0.0%; 2 prefix break(s), ~3112 tokens lost (estimate)
   (sessions grouped automatically by first message; use cachelint.session(id) for exact grouping)
 
-session 87a72ac21002 [anthropic] 3 req, hit ratio 0.0%, 2 break(s)
-  #0  claude-opus-5  segments=2 cacheable=1  in=24 read=0 write=1601
+session 600a924e2101 [anthropic] 3 req, hit ratio 0.0%, 2 break(s)
+  #0  claude-opus-5  segments=2 cacheable=2  in=24 read=0 write=1601
       ! CL012 iso-datetime inside the cacheable prefix at system[0]
         → Timestamps change every request. Move them after the last breakpoint or drop them.
-  #1  claude-opus-5  segments=4 cacheable=1  in=25 read=0 write=1602
-      ✗ prefix broken at system[0] +6190 (~1548 tokens lost, estimate)
+  #1  claude-opus-5  segments=4 cacheable=4  in=25 read=0 write=1602
+      ✗ prefix broken at system[0] +6190 (~1553 tokens lost, estimate)
         was: '…ime: 2026-09-20T10:15'
         now: '…ime: 2026-09-20T10:16'
-  #2  claude-opus-5  segments=6 cacheable=1  in=25 read=0 write=1603
-      ✗ prefix broken at system[0] +6190 (~1548 tokens lost, estimate)
+  #2  claude-opus-5  segments=6 cacheable=6  in=25 read=0 write=1603
+      ✗ prefix broken at system[0] +6190 (~1559 tokens lost, estimate)
         was: '…ime: 2026-09-20T10:16'
         now: '…ime: 2026-09-20T10:17'
 ```
@@ -146,8 +145,10 @@ cachelint.JsonlSink("trace.jsonl", redact=strip_media)  # drop base64 images/PDF
 cachelint.JsonlSink("trace.jsonl", redact=hash_text)    # keep structure and sizes only
 ```
 
-With `hash_text` the report still says *which block* changed and by how much,
-but not the bytes.
+With `hash_text` every text becomes a hash placeholder of the same length, so
+token estimates and size-based findings stay right and the report still says
+*which block* changed and by how much, but offsets and excerpts point into
+placeholders.
 
 Recording runs on the caller's thread right after the response body is consumed:
 one pass over the request body plus an O(1) session lookup. `Recorder` is

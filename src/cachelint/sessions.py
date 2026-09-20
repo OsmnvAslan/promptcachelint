@@ -65,10 +65,12 @@ MAX_OPEN_SESSIONS = 4096
 #: How many leading message blocks are indexed: the depth at which a sliding
 #: history window is still recognised (one agent exchange is four blocks).
 ANCHOR_BLOCKS = 16
-#: Share of the previous history that must reappear, in order, for a request
-#: with the same opener to count as that history *edited* rather than another
-#: conversation.
+#: Share of the previous history *after the opener* that must reappear, in
+#: order, for a request with the same opener to count as that history *edited*
+#: rather than another conversation; and the minimum number of such blocks
+#: (a canned bot greeting after "hi" must not be enough).
 EDITED_MIN_SHARE = 0.6
+EDITED_MIN_BLOCKS = 2
 
 
 @dataclass(slots=True)
@@ -164,8 +166,10 @@ def truncated(prev: list[Segment], new: list[Segment]) -> bool:
 def edited(prev: list[Segment], new: list[Segment]) -> bool:
     """True if ``new`` is ``prev``'s conversation with some history blocks rewritten.
 
-    Same opener, head near, body not shorter, and most of the old blocks still
-    present in order (old tool results truncated, a turn summarised). Two
+    Same opener, head near, body not shorter, and most of the old blocks
+    *after the opener* still present in order (old tool results truncated, a
+    turn summarised). The opener is the anchor and does not count; a shared
+    canned greeting alone does not count either (``EDITED_MIN_BLOCKS``). Two
     conversations that merely share an opener diverge on every later block and
     fail the share test.
     """
@@ -175,16 +179,17 @@ def edited(prev: list[Segment], new: list[Segment]) -> bool:
         return False
     if not prev_body[0].same(new_body[0]) or not head_near(prev_head, new_head):
         return False
-    j = 0
+    rest = prev_body[1:]
+    j = 1
     matched = 0
-    for p in prev_body:
+    for p in rest:
         k = j
         while k < len(new_body) and not p.same(new_body[k]):
             k += 1
         if k < len(new_body):  # found later on: keep it, skip what was rewritten
             matched += 1
             j = k + 1
-    return matched / len(prev_body) >= EDITED_MIN_SHARE
+    return matched >= EDITED_MIN_BLOCKS and matched / len(rest) >= EDITED_MIN_SHARE
 
 
 @dataclass(slots=True)

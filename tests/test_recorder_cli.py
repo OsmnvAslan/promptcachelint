@@ -131,5 +131,9 @@ def test_cli_report_and_lint(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "CL010" in capsys.readouterr().out
     req.write_text(json.dumps(anthropic_body()))
     assert main(["lint", str(req), "--provider", "anthropic"]) == 0
+    assert capsys.readouterr().out.strip() == "cachelint: no findings"
+    req.write_text(json.dumps(anthropic_body(system="tiny", mark_system=False)))
+    assert main(["lint", str(req), "--provider", "anthropic"]) == 0
+    assert "below the" in capsys.readouterr().out
     assert main(["codes"]) == 0
     assert "CL001" in capsys.readouterr().out

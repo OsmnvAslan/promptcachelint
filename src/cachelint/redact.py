@@ -5,10 +5,11 @@ strip what does not need to be there:
 
 * :func:`strip_media` drops base64 payloads (images, PDFs) and keeps their size,
   so prefix diffs still work on text and the file stays small.
-* :func:`hash_text` replaces every text with a short hash and its length. The
-  report can still tell *which block* changed and how big it was, but not the
-  bytes, so offsets and excerpts are gone. Use it when the content itself is
-  confidential.
+* :func:`hash_text` replaces every text with a hash placeholder padded to the
+  original length. Character counts, token estimates and size-based findings
+  stay correct; the report can still tell *which block* changed and how big it
+  was, but not the bytes, so offsets and excerpts are meaningless. Use it when
+  the content itself is confidential.
 """
 
 from __future__ import annotations
@@ -39,14 +40,22 @@ def strip_media(body: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], _walk(copy.deepcopy(body), fn))
 
 
+def _placeholder(value: str) -> str:
+    """``sha256:<hex>`` padded (or cut) to the exact length of ``value``."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    tag = f"sha256:{digest[:12]}"
+    if len(value) <= len(tag):
+        return tag[: len(value)]
+    return tag.ljust(len(value))
+
+
 def hash_text(body: dict[str, Any]) -> dict[str, Any]:
-    """Replace text content with ``sha256:<12 hex> (<n> chars)``; structure is kept."""
+    """Replace text content with a same-length ``sha256:<hex>`` placeholder; structure is kept."""
     keys = {"text", "content", "input_text", "output_text", "instructions", "system", "description"}
 
     def fn(key: str, value: Any) -> Any:
         if key in keys and isinstance(value, str):
-            digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
-            return f"sha256:{digest} ({len(value)} chars)"
+            return _placeholder(value)
         if key == "data" and isinstance(value, str) and len(value) >= _BASE64_MIN:
             return f"<{len(value)} base64 chars redacted>"
         return value

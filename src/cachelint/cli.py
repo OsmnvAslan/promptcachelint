@@ -10,6 +10,7 @@ from pathlib import Path
 from cachelint import findings as F
 from cachelint.analyze import analyze
 from cachelint.detectors import lint_request
+from cachelint.model import estimate_tokens_from_chars
 from cachelint.providers import get_provider, provider_names
 from cachelint.recorder import load_jsonl
 
@@ -61,11 +62,21 @@ def _lint(args: argparse.Namespace) -> int:
         print(f"cachelint: {exc}", file=sys.stderr)
         return 2
     raw = sys.stdin.read() if args.request == "-" else Path(args.request).read_text("utf-8")
-    findings = lint_request(provider, json.loads(raw))
+    body = json.loads(raw)
+    findings = lint_request(provider, body)
     if args.json:
         print(json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2))
     elif not findings:
-        print("cachelint: no findings")
+        segments = provider.segments(body)
+        total = estimate_tokens_from_chars(sum(seg.chars for seg in segments))
+        minimum = provider.min_prefix_tokens(body.get("model"))
+        if total < minimum:
+            print(
+                f"cachelint: no findings (prompt is ~{total} tokens, below the {minimum}-token "
+                "cacheable minimum for this model; nothing here can be cached either way)"
+            )
+        else:
+            print("cachelint: no findings")
     else:
         for f in findings:
             where = f" at {f.path}+{f.offset}" if f.path else ""

@@ -178,3 +178,42 @@ def test_anchor_hash_is_deterministic() -> None:
     idx = SessionIndex()
     idx.assign("anthropic", P.segments(anthropic_body()), 1.0)
     assert all(k > 0 for k in idx._by_anchor)
+
+
+# round 4
+
+
+def test_canned_greeting_after_hi_does_not_merge_conversations() -> None:
+    r = Recorder()
+    t = 0.0
+    for turn in range(1, 4):
+        for who in ("A", "B"):
+            history: list[dict[str, Any]] = [
+                {"role": "user", "content": [{"type": "text", "text": "hi"}]},
+                {"role": "assistant", "content": "Hello! How can I help you today?"},
+            ]
+            for i in range(1, turn):
+                history.append(
+                    {"role": "user", "content": [{"type": "text", "text": f"{who} q{i}"}]}
+                )
+                history.append({"role": "assistant", "content": f"{who} a{i}"})
+            r.record(
+                "anthropic",
+                anthropic_body(history=history, user=f"{who} q{turn}", mark_last=True),
+                at=t,
+            )
+            t += 1
+    report = analyze(r.records)
+    assert len(report.sessions) == 2 and report.totals.breaks == 0
+
+
+def test_hash_text_keeps_lengths_so_estimates_and_cl011_stay_right() -> None:
+    from cachelint.redact import hash_text
+
+    a, b = anthropic_body(system=LONG + "v1"), anthropic_body(system=LONG + "v2")
+    plain = analyze([rec(a, 1.0), rec(b, 2.0)])
+    hashed = analyze([rec(hash_text(a), 1.0), rec(hash_text(b), 2.0)])
+    assert hashed.totals.lost_tokens_estimate == plain.totals.lost_tokens_estimate
+    assert {f.code for f in hashed.findings} == {f.code for f in plain.findings}
+    assert len(hash_text(a)["system"][0]["text"]) == len(a["system"][0]["text"])
+    assert len(hash_text({"text": "hi"})["text"]) == 2
