@@ -200,6 +200,7 @@ class SessionIndex:
     _open: dict[str, _Open] = field(default_factory=dict)
     _by_anchor: dict[int, list[str]] = field(default_factory=dict)
     _order: list[str] = field(default_factory=list)
+    _calls: int = 0
 
     def assign(
         self,
@@ -208,6 +209,9 @@ class SessionIndex:
         at: float,
         explicit: str | None = None,
     ) -> str:
+        self._calls += 1
+        if self._calls % 256 == 0:
+            self._evict_stale(at)
         if explicit is not None:
             self._touch(explicit, provider, segments, at, explicit=True)
             return explicit
@@ -292,6 +296,15 @@ class SessionIndex:
                 ids.remove(sid)
                 if not ids:
                     del self._by_anchor[h]
+
+    def _evict_stale(self, now: float) -> None:
+        """Drop sessions idle for longer than the gap window (they can never continue)."""
+        for sid in [
+            sid for sid in self._order if now - self._open[sid].last_at > self.max_gap_seconds
+        ]:
+            self._order.remove(sid)
+            s = self._open.pop(sid)
+            self._unindex(sid, s.anchors)
 
     def _evict(self) -> None:
         while len(self._order) > MAX_OPEN_SESSIONS:

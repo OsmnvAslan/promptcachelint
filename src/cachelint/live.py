@@ -16,14 +16,15 @@ class LogWatcher:
     """A :class:`Recorder` sink that logs findings the moment they appear.
 
     Runs the same :class:`~cachelint.analyze.Analyzer` as the offline report,
-    so a warning in the log and a line in ``cachelint report`` never disagree.
-    Session ids come with the record (the recorder assigned them), so no index
-    is shared.
+    so a warning in the log and a line in ``cachelint report`` never disagree,
+    but without history: only the last request per session is kept, and idle
+    sessions are dropped, so memory stays proportional to active conversations.
+    Session ids come with the record (the recorder assigned them).
     """
 
     def __init__(self, logger: logging.Logger | None = None) -> None:
         self.log = logger or logging.getLogger("cachelint")
-        self.analyzer = Analyzer()
+        self.analyzer = Analyzer(history=False)
 
     def __call__(self, record: Record) -> None:
         report = self.analyzer.step(record)

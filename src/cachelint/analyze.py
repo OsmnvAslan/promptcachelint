@@ -72,6 +72,9 @@ class SessionReport:
     provider: str
     explicit: bool
     requests: list[RequestReport] = field(default_factory=list)
+    #: Requests seen, including ones not kept when history is off.
+    count: int = 0
+    last_at: float = 0.0
 
     @property
     def findings(self) -> list[F.Finding]:
@@ -168,16 +171,29 @@ class Report:
         return render_text(self)
 
 
-class Analyzer:
-    """Incremental analysis: feed records in time order, read the report any time."""
+MAX_TRACKED_SESSIONS = 4096
+MAX_TRACKED_HEADS = 4096
 
-    def __init__(self, index: SessionIndex | None = None) -> None:
+
+class Analyzer:
+    """Incremental analysis: feed records in time order, read the report any time.
+
+    With ``history=True`` (the offline report) every request report is kept.
+    With ``history=False`` (live mode) only the last report per session is
+    kept for diffing, and sessions idle for longer than the index's
+    ``max_gap_seconds`` are dropped, so memory is bounded by the number of
+    *active* conversations, not by the number of requests ever seen.
+    """
+
+    def __init__(self, index: SessionIndex | None = None, *, history: bool = True) -> None:
         self.index = index or SessionIndex()
+        self.history = history
         self.sessions: dict[str, SessionReport] = {}
         self._last: dict[str, RequestReport] = {}
         self._static_seen: dict[str, set[tuple[str, str | None]]] = {}
-        # Last single-turn request per (provider, tools+system head), across sessions.
+        # Last single-turn request per (provider, scope, tools+system head), across sessions.
         self._last_by_head: dict[tuple[Any, ...], RequestReport] = {}
+        self._steps = 0
 
     def step(self, record: Record) -> RequestReport:
         provider = get_provider(record.provider)
@@ -199,12 +215,35 @@ class Analyzer:
             diff = _soften_for_automatic_caching(provider, prev, record, diff)
             findings += session_findings(provider, prev, record, segments, cacheable, diff)
 
-        report = RequestReport(record, len(session.requests), segments, cacheable, diff, findings)
+        report = RequestReport(record, session.count, segments, cacheable, diff, findings)
         if prev is None:
             findings += self._head_findings(provider, report)
-        session.requests.append(report)
+        session.count += 1
+        session.last_at = max(session.last_at, record.at)
+        if self.history:
+            session.requests.append(report)
         self._last[sid] = report
+
+        self._steps += 1
+        if not self.history and self._steps % 64 == 0:
+            self._evict(record.at)
         return report
+
+    def _evict(self, now: float) -> None:
+        """Live mode: forget sessions idle past the gap window, and cap the rest."""
+        gap = self.index.max_gap_seconds
+        stale = {sid for sid, s in self.sessions.items() if now - s.last_at > gap}
+        overflow = len(self.sessions) - len(stale) - MAX_TRACKED_SESSIONS
+        if overflow > 0:
+            live = sorted((s.last_at, sid) for sid, s in self.sessions.items() if sid not in stale)
+            stale.update(sid for _, sid in live[:overflow])
+        for sid in stale:
+            self.sessions.pop(sid, None)
+            self._last.pop(sid, None)
+            self._static_seen.pop(sid, None)
+        if len(self._last_by_head) > MAX_TRACKED_HEADS:
+            for key in list(self._last_by_head)[: len(self._last_by_head) // 2]:
+                del self._last_by_head[key]
 
     def _head_findings(self, provider: Provider, report: RequestReport) -> list[F.Finding]:
         """Cross-session checks for requests that share tools+system.

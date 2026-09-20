@@ -90,6 +90,15 @@ def _record(
     if status < 200 or status >= 300:
         return  # errors never touch the cache
     try:
+        if not data:
+            recorder.record(
+                provider.name,
+                body,
+                stream=bool(body.get("stream")),
+                url=url,
+                note="response body never consumed (request aborted or closed early)",
+            )
+            return
         data = _decode(status, headers, data)
         content_type = headers.get("content-type", "")
         if "text/event-stream" in content_type:

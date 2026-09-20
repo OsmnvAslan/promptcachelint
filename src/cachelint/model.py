@@ -85,6 +85,8 @@ class Record:
     stream: bool = False
     url: str | None = None
     response_id: str | None = None
+    #: Why usage is missing, when it is (e.g. the response body was never consumed).
+    note: str | None = None
 
     def to_dict(self, redact: Redactor | None = None) -> dict[str, Any]:
         d = asdict(self)
@@ -109,6 +111,7 @@ class Record:
             stream=bool(d.get("stream", False)),
             url=d.get("url"),
             response_id=d.get("response_id"),
+            note=d.get("note"),
         )
 
 

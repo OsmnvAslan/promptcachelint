@@ -130,7 +130,7 @@ def test_unparseable_bodies_never_break_the_request() -> None:
     with client(recorder, transport=hx.MockTransport(bad)) as c:
         assert c.post(ANTHROPIC, content=b"also not json").text == "not json"
         assert c.post(ANTHROPIC, json=anthropic_body()).text == "not json"
-    assert recorder.records == []
+    assert list(recorder.records) == []
 
 
 def test_sdk_style_usage_matches_recorder_sessions() -> None:

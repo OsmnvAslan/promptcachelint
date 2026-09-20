@@ -15,7 +15,7 @@ from cachelint.findings import Finding
 from cachelint.live import LogWatcher
 from cachelint.model import Record, Segment, Usage, estimate_tokens, estimate_tokens_from_chars
 from cachelint.providers import detect_provider, get_provider, register_provider
-from cachelint.recorder import JsonlSink, Recorder, load_jsonl
+from cachelint.recorder import JsonlSink, Recorder, Trace, load_jsonl, read_trace
 from cachelint.sessions import SessionIndex, current_session, session
 from cachelint.testing import assert_cache_stable
 
@@ -38,6 +38,7 @@ __all__ = [
     "SessionIndex",
     "SessionReport",
     "Totals",
+    "Trace",
     "Usage",
     "__version__",
     "analyze",
@@ -51,6 +52,7 @@ __all__ = [
     "get_provider",
     "lint_request",
     "load_jsonl",
+    "read_trace",
     "redact",
     "register_provider",
     "session",

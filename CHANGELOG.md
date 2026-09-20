@@ -13,9 +13,11 @@ Initial release.
   first message block; a continuation is a grown or repeated history; sliding
   history windows and edited histories (truncated tool results) are
   recognised and reported with their own hints.
-- `Recorder` (thread-safe) with JSONL sink and redactors (`strip_media`,
-  `hash_text`), `LogWatcher` live mode sharing the offline analyzer,
-  `assert_cache_stable` for tests.
+- `Recorder` (thread-safe, bounded by `keep`) with JSONL sink and redactors
+  (`strip_media`, length-preserving `hash_text`), `LogWatcher` live mode
+  sharing the offline analyzer without history (memory bounded by active
+  sessions), `assert_cache_stable` for tests, `read_trace` that skips and
+  counts unreadable lines.
 - `cachelint.transport`: recording httpx2 transport (sync and async), SSE aware,
   decodes compressed responses.
 - CLI: `report`, `lint`, `codes`.

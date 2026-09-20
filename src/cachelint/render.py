@@ -19,6 +19,8 @@ def _fmt_request(r: RequestReport) -> list[str]:
     usage = (
         f"in={u.input_tokens} read={u.cache_read} write={u.cache_write}"
         if u is not None
+        else f"usage: n/a ({r.record.note})"
+        if r.record.note
         else "usage: n/a"
     )
     head = (

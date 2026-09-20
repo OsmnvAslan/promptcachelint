@@ -12,7 +12,7 @@ from cachelint.analyze import analyze
 from cachelint.detectors import lint_request
 from cachelint.model import estimate_tokens_from_chars
 from cachelint.providers import get_provider, provider_names
-from cachelint.recorder import load_jsonl
+from cachelint.recorder import read_trace
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,10 +46,21 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _report(args: argparse.Namespace) -> int:
-    report = analyze(load_jsonl(args.trace))
+    trace = read_trace(args.trace)
+    if not trace.records:
+        reason = f"; {len(trace.skipped)} unreadable line(s)" if trace.skipped else ""
+        print(f"cachelint: no records in {args.trace}{reason}", file=sys.stderr)
+        return 2
+    report = analyze(trace.records)
     if args.json:
-        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        payload = report.to_dict()
+        payload["skipped_lines"] = [{"line": n, "reason": r} for n, r in trace.skipped]
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
+        if trace.skipped:
+            shown = ", ".join(f"{n} ({r})" for n, r in trace.skipped[:3])
+            more = f" and {len(trace.skipped) - 3} more" if len(trace.skipped) > 3 else ""
+            print(f"cachelint: {len(trace.skipped)} line(s) skipped: {shown}{more}")
         print(report.to_text())
     fail_on = {c.strip() for c in args.fail_on.split(",") if c.strip()}
     return 1 if any(f.code in fail_on for f in report.findings) else 0

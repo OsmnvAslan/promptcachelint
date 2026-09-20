@@ -5,11 +5,12 @@ strip what does not need to be there:
 
 * :func:`strip_media` drops base64 payloads (images, PDFs) and keeps their size,
   so prefix diffs still work on text and the file stays small.
-* :func:`hash_text` replaces every text with a hash placeholder padded to the
-  original length. Character counts, token estimates and size-based findings
-  stay correct; the report can still tell *which block* changed and how big it
-  was, but not the bytes, so offsets and excerpts are meaningless. Use it when
-  the content itself is confidential.
+* :func:`hash_text` replaces every text with its SHA-256 digest repeated or cut
+  to the original length in characters. Character counts, token estimates and
+  size-based findings stay correct, different texts stay different, and the
+  report can still tell *which block* changed and how big it was, but not the
+  bytes, so offsets and excerpts are meaningless. Use it when the content itself
+  is confidential.
 """
 
 from __future__ import annotations
@@ -41,16 +42,22 @@ def strip_media(body: dict[str, Any]) -> dict[str, Any]:
 
 
 def _placeholder(value: str) -> str:
-    """``sha256:<hex>`` padded (or cut) to the exact length of ``value``."""
+    """The SHA-256 hex digest of ``value``, repeated or cut to its exact character length.
+
+    No readable prefix: two different short texts differ from their first
+    characters on, so redacted openers still separate sessions and a break in a
+    short block is still a break. Length is preserved in *characters*, not
+    bytes, because token estimates count characters.
+    """
+    if not value:
+        return value
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
-    tag = f"sha256:{digest[:12]}"
-    if len(value) <= len(tag):
-        return tag[: len(value)]
-    return tag.ljust(len(value))
+    reps = len(value) // len(digest) + 1
+    return (digest * reps)[: len(value)]
 
 
 def hash_text(body: dict[str, Any]) -> dict[str, Any]:
-    """Replace text content with a same-length ``sha256:<hex>`` placeholder; structure is kept."""
+    """Replace text content with a same-length hex placeholder; structure is kept."""
     keys = {"text", "content", "input_text", "output_text", "instructions", "system", "description"}
 
     def fn(key: str, value: Any) -> Any:

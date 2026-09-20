@@ -272,7 +272,8 @@ def test_redaction_helpers() -> None:
     assert body["messages"][0]["content"][1]["source"]["data"] == "A" * 1000  # original untouched
 
     hashed = hash_text(body)
-    assert hashed["system"][0]["text"].startswith("sha256:")
+    assert len(hashed["system"][0]["text"]) == len(body["system"][0]["text"])
+    assert hashed["system"][0]["text"] != body["system"][0]["text"]
     short = hashed["messages"][0]["content"][0]["text"]  # "hello": same length, still hidden
     assert len(short) == 5 and short != "hello"
     assert hashed["system"][0]["cache_control"] == {"type": "ephemeral"}
@@ -284,4 +285,5 @@ def test_jsonl_sink_redacts(tmp_path: Any) -> None:
     path = tmp_path / "t.jsonl"
     r = Recorder(JsonlSink(path, redact=hash_text))
     r.record("anthropic", anthropic_body())
-    assert load_jsonl(path)[0].body["system"][0]["text"].startswith("sha256:")
+    stored = load_jsonl(path)[0].body["system"][0]["text"]
+    assert stored != LONG and len(stored) == len(LONG)

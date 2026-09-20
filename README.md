@@ -30,7 +30,9 @@ session 600a924e2101 [anthropic] 3 req, hit ratio 0.0%, 2 break(s)
 ```
 
 Zero dependencies. Python 3.11+. Anthropic Messages API, OpenAI Chat Completions
-and Responses.
+and Responses (with the full history in the request; when `previous_response_id`
+keeps the conversation server-side, the request body holds only the new turn and
+there is no prefix to analyse).
 
 ## Install
 
@@ -69,7 +71,7 @@ print(cachelint.analyze(recorder.records).to_text())
 Then, or on a trace from production:
 
 ```bash
-cachelint report trace.jsonl              # human-readable
+cachelint report trace.jsonl              # human-readable; broken lines are skipped and counted
 cachelint report trace.jsonl --json       # machine-readable
 cachelint report trace.jsonl --fail-on CL001,CL002   # non-zero exit for CI
 cachelint lint request.json --provider anthropic     # static checks on one body
@@ -145,15 +147,23 @@ cachelint.JsonlSink("trace.jsonl", redact=strip_media)  # drop base64 images/PDF
 cachelint.JsonlSink("trace.jsonl", redact=hash_text)    # keep structure and sizes only
 ```
 
-With `hash_text` every text becomes a hash placeholder of the same length, so
-token estimates and size-based findings stay right and the report still says
-*which block* changed and by how much, but offsets and excerpts point into
-placeholders.
+With `hash_text` every text becomes its SHA-256 digest repeated or cut to the
+same length in characters, so token estimates and size-based findings stay
+right, different texts stay different, and the report still says *which block*
+changed and by how much, but offsets and excerpts point into placeholders.
 
-Recording runs on the caller's thread right after the response body is consumed:
-one pass over the request body plus an O(1) session lookup. `Recorder` is
-thread-safe. On a latency-critical async path with very large prompts, record
-from a worker instead of the transport.
+**Memory.** `Recorder` keeps the last 10 000 records by default (`keep=`; `None`
+for unlimited, `0` for a pure live setup that only feeds sinks). `LogWatcher`
+runs the analyzer without history: one request per session is remembered for
+the diff, and sessions idle for six hours are dropped, so a long-running process
+holds memory proportional to its active conversations, not to its lifetime
+traffic. The offline report (`analyze`, `cachelint report`) keeps everything for
+the trace it is given.
+
+**CPU.** Recording runs on the caller's thread right after the response body
+is consumed: one pass over the request body plus an O(1) session lookup.
+`Recorder` is thread-safe. On a latency-critical async path with very large
+prompts, record from a worker instead of the transport.
 
 ## In tests
 
