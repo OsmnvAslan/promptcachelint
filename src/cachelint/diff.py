@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cachelint.model import Segment, estimate_tokens
+from cachelint.model import Segment, estimate_tokens_from_chars
 
 EXCERPT = 60
 
@@ -16,6 +16,7 @@ class PrefixDiff:
     ``broken`` is True only when the divergence lies *inside* the part of the
     previous request that the provider could have served from cache. Extra
     segments appended after that part are the normal growth of a conversation.
+    ``offset`` is a character offset into the block's own text.
     """
 
     common_segments: int
@@ -24,6 +25,7 @@ class PrefixDiff:
     segment_index: int | None = None
     path: str | None = None
     kind: str | None = None
+    role: str | None = None
     offset: int | None = None
     before: str = ""
     after: str = ""
@@ -31,7 +33,7 @@ class PrefixDiff:
 
     @property
     def lost_tokens_estimate(self) -> int:
-        return estimate_tokens("x" * self.lost_chars) if self.lost_chars else 0
+        return estimate_tokens_from_chars(self.lost_chars)
 
 
 def _common_prefix_len(a: str, b: str) -> int:
@@ -54,7 +56,7 @@ def _excerpt(text: str, offset: int) -> str:
 
 
 def _lost_chars(prev: list[Segment], i: int, offset: int, prev_cacheable: int) -> int:
-    """Bytes that were cached last time and must be re-billed now.
+    """Characters that were cached last time and must be re-billed now.
 
     With explicit breakpoints (Anthropic) reads can only land *at* a marker, so
     everything after the last intact marker before the break is lost, even the
@@ -74,7 +76,7 @@ def diff_prefix(prev: list[Segment], new: list[Segment], prev_cacheable: int) ->
     """Compare ``new`` against ``prev``; ``prev_cacheable`` = cacheable segment count of prev."""
     n = min(len(prev), len(new))
     i = 0
-    while i < n and prev[i].kind == new[i].kind and prev[i].text == new[i].text:
+    while i < n and prev[i].same(new[i]):
         i += 1
 
     if i >= prev_cacheable:
@@ -89,6 +91,7 @@ def diff_prefix(prev: list[Segment], new: list[Segment], prev_cacheable: int) ->
             segment_index=i,
             path=prev[i].path,
             kind=prev[i].kind,
+            role=prev[i].role,
             offset=0,
             before=_excerpt(prev[i].text, 0),
             after="",
@@ -96,14 +99,16 @@ def diff_prefix(prev: list[Segment], new: list[Segment], prev_cacheable: int) ->
         )
 
     a, b = prev[i], new[i]
-    offset = _common_prefix_len(a.text, b.text) if a.kind == b.kind else 0
+    aligned = a.kind == b.kind and a.role == b.role and a.block == b.block
+    offset = _common_prefix_len(a.text, b.text) if aligned else 0
     return PrefixDiff(
         common_segments=i,
         prev_cacheable=prev_cacheable,
         broken=True,
         segment_index=i,
-        path=b.path if a.kind == b.kind else a.path,
+        path=b.path if aligned else a.path,
         kind=a.kind,
+        role=a.role,
         offset=offset,
         before=_excerpt(a.text, offset),
         after=_excerpt(b.text, offset),

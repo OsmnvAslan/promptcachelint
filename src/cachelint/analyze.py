@@ -1,20 +1,26 @@
-"""Turn a list of records into a report: sessions, diffs, findings, totals."""
+"""Turn records into a report: sessions, diffs, findings, totals.
+
+:class:`Analyzer` is incremental (one record at a time) so the live watcher
+and the offline report share exactly the same rules; :func:`analyze` runs it
+over a whole trace.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from cachelint import findings as F
 from cachelint.detectors import structure, volatile_content
 from cachelint.diff import PrefixDiff, diff_prefix
-from cachelint.model import Record, Segment, Usage, estimate_tokens
+from cachelint.model import Record, Segment, Usage, estimate_tokens_from_chars
 from cachelint.providers import get_provider
+from cachelint.providers.anthropic import SCOPE_KEYS as ANTHROPIC_SCOPE
 from cachelint.providers.base import Provider
+from cachelint.providers.openai import SCOPE_KEYS as OPENAI_SCOPE
 from cachelint.sessions import SessionIndex
 
-TTL_SECONDS = {"5m": 5 * 60, "1h": 60 * 60}
 LOOKBACK_POSITIONS = 20
 
 
@@ -64,6 +70,7 @@ class RequestReport:
 class SessionReport:
     id: str
     provider: str
+    explicit: bool
     requests: list[RequestReport] = field(default_factory=list)
 
     @property
@@ -78,6 +85,7 @@ class SessionReport:
         return {
             "id": self.id,
             "provider": self.provider,
+            "explicit": self.explicit,
             "totals": self.totals.to_dict(),
             "requests": [r.to_dict() for r in self.requests],
         }
@@ -143,8 +151,16 @@ class Report:
     def totals(self) -> Totals:
         return Totals.of(r for s in self.sessions for r in s.requests)
 
+    @property
+    def auto_grouped(self) -> bool:
+        return any(not s.explicit for s in self.sessions)
+
     def to_dict(self) -> dict[str, Any]:
-        return {"totals": self.totals.to_dict(), "sessions": [s.to_dict() for s in self.sessions]}
+        return {
+            "totals": self.totals.to_dict(),
+            "auto_grouped": self.auto_grouped,
+            "sessions": [s.to_dict() for s in self.sessions],
+        }
 
     def to_text(self) -> str:
         from cachelint.render import render_text
@@ -152,44 +168,155 @@ class Report:
         return render_text(self)
 
 
-def analyze(records: Iterable[Record], *, index: SessionIndex | None = None) -> Report:
-    """Group records into sessions, diff consecutive requests, collect findings."""
-    index = index or SessionIndex()
-    sessions: dict[str, SessionReport] = {}
-    last: dict[str, RequestReport] = {}
-    static_seen: dict[str, set[tuple[str, str | None]]] = {}
+class Analyzer:
+    """Incremental analysis: feed records in time order, read the report any time."""
 
-    for record in sorted(records, key=lambda r: r.at):
+    def __init__(self, index: SessionIndex | None = None) -> None:
+        self.index = index or SessionIndex()
+        self.sessions: dict[str, SessionReport] = {}
+        self._last: dict[str, RequestReport] = {}
+        self._static_seen: dict[str, set[tuple[str, str | None]]] = {}
+        # Last single-turn request per (provider, tools+system head), across sessions.
+        self._last_by_head: dict[tuple[Any, ...], RequestReport] = {}
+
+    def step(self, record: Record) -> RequestReport:
         provider = get_provider(record.provider)
         segments = provider.segments(record.body)
         cacheable = provider.cacheable_segments(record.body, segments)
-        sid = index.assign(record.provider, segments, record.at, explicit=record.session_id)
-        session = sessions.setdefault(sid, SessionReport(id=sid, provider=record.provider))
+        sid = self.index.assign(record.provider, segments, record.at, explicit=record.session_id)
+        session = self.sessions.get(sid)
+        if session is None:
+            session = SessionReport(
+                id=sid, provider=record.provider, explicit=record.session_explicit
+            )
+            self.sessions[sid] = session
 
-        prev = last.get(sid)
+        findings = self._static(sid, provider, record, segments, cacheable)
+        prev = self._last.get(sid)
         diff = None
+        if prev is not None:
+            diff = diff_prefix(prev.segments, segments, prev.cacheable)
+            diff = _soften_for_automatic_caching(provider, prev, record, diff)
+            findings += session_findings(provider, prev, record, segments, cacheable, diff)
+
+        report = RequestReport(record, len(session.requests), segments, cacheable, diff, findings)
+        if prev is None:
+            findings += self._head_findings(provider, report)
+        session.requests.append(report)
+        self._last[sid] = report
+        return report
+
+    def _head_findings(self, provider: Provider, report: RequestReport) -> list[F.Finding]:
+        """CL014 for the "shared prefix, varying question" shape.
+
+        Such requests never share a session (their first message differs), but
+        they share tools+system. If each one writes cache and reads nothing,
+        the marker sits after the per-request part.
+        """
+        head = tuple(s.key for s in report.segments if s.kind != "message")
+        if not head or not provider.explicit_markers:
+            return []
+        key = (provider.name, head)
+        prev = self._last_by_head.get(key)
+        self._last_by_head[key] = report
+        u, pu = report.usage, prev.usage if prev is not None else None
+        if (
+            prev is not None
+            and u is not None
+            and pu is not None
+            and report.cacheable > len(head)
+            and u.cache_write > 0
+            and u.cache_read == 0
+            and pu.cache_write > 0
+            and pu.cache_read == 0
+        ):
+            return [
+                F.Finding(
+                    code=F.WRITE_WITHOUT_READ,
+                    severity="warning",
+                    message=(
+                        "requests with the same tools+system write cache but never read it back"
+                    ),
+                    hint=(
+                        "The breakpoint sits after per-request content, so every request writes "
+                        "a distinct entry. Put the marker at the end of the shared part."
+                    ),
+                )
+            ]
+        return []
+
+    def _static(
+        self,
+        sid: str,
+        provider: Provider,
+        record: Record,
+        segments: list[Segment],
+        cacheable: int,
+    ) -> list[F.Finding]:
+        """Static findings, each reported once per session (same code and path)."""
         static = structure(provider, record.body, segments, cacheable)
         static += volatile_content(segments, cacheable)
-        # A static problem is reported once per session, not on every turn.
-        seen = static_seen.setdefault(sid, set())
-        findings: list[F.Finding] = []
+        seen = self._static_seen.setdefault(sid, set())
+        out: list[F.Finding] = []
         for f in static:
             key = (f.code, f.path)
             if key not in seen:
                 seen.add(key)
-                findings.append(f)
-        if prev is not None:
-            diff = diff_prefix(prev.segments, segments, prev.cacheable)
-            findings += _session_findings(provider, prev, record, segments, cacheable, diff)
+                out.append(f)
+        return out
 
-        report = RequestReport(record, len(session.requests), segments, cacheable, diff, findings)
-        session.requests.append(report)
-        last[sid] = report
-
-    return Report(sessions=list(sessions.values()))
+    def report(self) -> Report:
+        return Report(sessions=list(self.sessions.values()))
 
 
-def _session_findings(
+def analyze(records: Iterable[Record], *, index: SessionIndex | None = None) -> Report:
+    """Group records into sessions, diff consecutive requests, collect findings."""
+    analyzer = Analyzer(index)
+    for record in sorted(records, key=lambda r: r.at):
+        analyzer.step(record)
+    return analyzer.report()
+
+
+def _soften_for_automatic_caching(
+    provider: Provider, prev: RequestReport, record: Record, diff: PrefixDiff
+) -> PrefixDiff:
+    """On providers without markers, a divergence in the tail is not a break.
+
+    OpenAI serves whatever prefix still matches, in 128-token steps. A changed
+    last message loses less than one step, and if the provider reports a cache
+    read at least as large as last time, nothing was lost at all.
+    """
+    if provider.explicit_markers or not diff.broken:
+        return diff
+    if diff.lost_tokens_estimate < provider.cache_granularity_tokens:
+        return replace(diff, broken=False)
+    if (
+        record.usage is not None
+        and prev.usage is not None
+        and record.usage.cache_read >= prev.usage.cache_read > 0
+    ):
+        return replace(diff, broken=False)
+    return diff
+
+
+def positions(segments: Iterable[Segment]) -> int:
+    """Cache positions in a run of segments.
+
+    Consecutive ``tool_use`` blocks count as one position, and so do
+    consecutive ``tool_result`` blocks (Anthropic's lookback rule).
+    """
+    count = 0
+    run: str | None = None
+    for seg in segments:
+        block = seg.block if seg.block in ("tool_use", "tool_result") else None
+        if block is not None and block == run:
+            continue
+        run = block
+        count += 1
+    return count
+
+
+def session_findings(
     provider: Provider,
     prev: RequestReport,
     record: Record,
@@ -197,9 +324,10 @@ def _session_findings(
     cacheable: int,
     diff: PrefixDiff,
 ) -> list[F.Finding]:
+    """Findings that need the previous request of the same session."""
     out: list[F.Finding] = []
+    hints = ANTHROPIC_SCOPE if provider.name == "anthropic" else OPENAI_SCOPE
 
-    # Top-level scope changes (model, thinking, effort, cache key).
     prev_scope = provider.scope(prev.record.body)
     scope = provider.scope(record.body)
     for key in sorted(set(prev_scope) | set(scope)):
@@ -209,12 +337,7 @@ def _session_findings(
                     code=F.SCOPE_CHANGED,
                     severity="error" if key == "model" else "warning",
                     message=f"{key} changed: {prev_scope.get(key)} -> {scope.get(key)}",
-                    hint=(
-                        "Caches are model-scoped; a model switch rebuilds everything."
-                        if key == "model"
-                        else "Thinking/effort/cache-key changes invalidate the messages cache. "
-                        "Pin them per route."
-                    ),
+                    hint=hints.get(key, "Pin this parameter per route."),
                     data={"key": key, "before": prev_scope.get(key), "after": scope.get(key)},
                 )
             )
@@ -259,12 +382,13 @@ def _session_findings(
                     data={
                         "before": diff.before,
                         "after": diff.after,
+                        "role": diff.role,
                         "common_segments": diff.common_segments,
                     },
                 )
             )
 
-    if provider.name == "anthropic" and cacheable < prev.cacheable and not diff.broken:
+    if provider.explicit_markers and cacheable < prev.cacheable and not diff.broken:
         out.append(
             F.Finding(
                 code=F.BREAKPOINT_MOVED_BACK,
@@ -277,30 +401,32 @@ def _session_findings(
             )
         )
 
-    appended = len(segments) - diff.common_segments
-    if provider.name == "anthropic" and not diff.broken and appended > LOOKBACK_POSITIONS:
+    appended = positions(segments[diff.common_segments :])
+    if provider.explicit_markers and not diff.broken and appended > LOOKBACK_POSITIONS:
         out.append(
             F.Finding(
                 code=F.LOOKBACK_EXCEEDED,
                 severity="warning",
                 message=(
-                    f"{appended} blocks appended since the previous request; the breakpoint "
-                    f"lookback window is {LOOKBACK_POSITIONS} positions"
+                    f"{appended} positions appended since the previous request; the "
+                    f"breakpoint lookback window is {LOOKBACK_POSITIONS}"
                 ),
                 hint="Place an intermediate breakpoint every ~15 positions in long turns.",
-                data={"appended": appended},
+                data={"appended_positions": appended},
             )
         )
 
     gap = record.at - prev.record.at
-    ttl = _ttl_seconds(prev.segments)
+    ttl = provider.ttl_seconds(prev.segments)
     if gap > ttl and prev.cacheable > 0:
         out.append(
             F.Finding(
                 code=F.TTL_GAP,
                 severity="info",
-                message=f"{gap:.0f}s since the previous request; cache TTL is {ttl}s",
-                hint="Expect a write, not a read. Use ttl: '1h' for bursty traffic, or pre-warm.",
+                message=f"{gap:.0f}s since the previous request; cache TTL is about {ttl}s",
+                hint="Expect a write, not a read. Use ttl: '1h' for bursty traffic, or pre-warm."
+                if provider.explicit_markers
+                else "Entries live 5-10 minutes; expect the prefix to be recomputed.",
                 data={"gap_seconds": round(gap, 1), "ttl_seconds": ttl},
             )
         )
@@ -309,6 +435,7 @@ def _session_findings(
     tail_only = not diff.broken or diff.kind == "message"
     if (
         tail_only
+        and provider.explicit_markers
         and usage is not None
         and prev.usage is not None
         and prev.cacheable > 0
@@ -328,35 +455,34 @@ def _session_findings(
                 ),
             )
         )
+
     if usage is not None and not diff.broken and prev.cacheable > 0 and gap <= ttl:
         expected_chars = sum(s.chars for s in prev.segments[: prev.cacheable])
-        expected = estimate_tokens("x" * expected_chars) if expected_chars else 0
-        if usage.cache_read == 0 and expected >= provider.min_prefix_tokens(record.model):
-            scope_changed = any(f.code == F.SCOPE_CHANGED for f in out)
-            if not scope_changed:
-                out.append(
-                    F.Finding(
-                        code=F.UNEXPLAINED_MISS,
-                        severity="warning",
-                        message=(
-                            f"prefix matched the previous request (~{expected} tokens, "
-                            "estimate) but cache_read is 0"
-                        ),
-                        hint=(
-                            "The payload looks identical; suspects are outside it: a different "
-                            "workspace/API key, a server-side invalidator (thinking blocks "
-                            "stripped on older models), or the previous write never landed "
-                            "(prefix below minimum). On Anthropic, cache diagnostics can confirm."
-                        ),
-                        data={"expected_tokens_estimate": expected},
-                    )
+        expected = estimate_tokens_from_chars(expected_chars)
+        scope_changed = any(f.code == F.SCOPE_CHANGED for f in out)
+        if (
+            usage.cache_read == 0
+            and expected >= provider.min_prefix_tokens(record.model)
+            and not scope_changed
+        ):
+            out.append(
+                F.Finding(
+                    code=F.UNEXPLAINED_MISS,
+                    severity="info" if provider.best_effort else "warning",
+                    message=(
+                        f"prefix matched the previous request (~{expected} tokens, "
+                        "estimate) but cache_read is 0"
+                    ),
+                    hint=(
+                        "The cache is best-effort; occasional misses on an intact prefix "
+                        "are expected."
+                        if provider.best_effort
+                        else "The payload looks identical; suspects are outside it: a different "
+                        "workspace/API key, a server-side invalidator (thinking blocks "
+                        "stripped on older models), or the previous write never landed "
+                        "(prefix below minimum). On Anthropic, cache diagnostics can confirm."
+                    ),
+                    data={"expected_tokens_estimate": expected},
                 )
+            )
     return out
-
-
-def _ttl_seconds(segments: list[Segment]) -> int:
-    ttl = "5m"
-    for seg in segments:
-        if seg.breakpoint and seg.ttl:
-            ttl = seg.ttl
-    return TTL_SECONDS.get(ttl, TTL_SECONDS["5m"])

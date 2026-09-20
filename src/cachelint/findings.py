@@ -48,7 +48,7 @@ TOO_MANY_BREAKPOINTS = "CL013"
 WRITE_WITHOUT_READ = "CL014"
 
 DESCRIPTIONS: dict[str, str] = {
-    PREFIX_BROKEN: "content inside the previously cached prefix changed",
+    PREFIX_BROKEN: "content inside the previously cached prefix changed (confirmed by diff)",
     TOOLS_CHANGED: "tool definitions changed between requests (invalidates everything)",
     SCOPE_CHANGED: "a top-level parameter changed (model / thinking / effort / cache key)",
     BREAKPOINT_MOVED_BACK: "the last cache breakpoint moved earlier than in the previous request",
@@ -57,7 +57,8 @@ DESCRIPTIONS: dict[str, str] = {
     LOOKBACK_EXCEEDED: "more than 20 positions appended in one turn (breakpoint lookback window)",
     NO_BREAKPOINT: "no cache_control marker anywhere; nothing can be read from cache",
     PREFIX_TOO_SHORT: "cacheable prefix is below the model's minimum (estimate)",
-    VOLATILE_CONTENT: "volatile value (timestamp / UUID / random id) inside the cacheable prefix",
+    VOLATILE_CONTENT: "looks volatile (timestamp / UUID / random id) inside the cacheable "
+    "prefix (suspicion; CL001 confirms)",
     TOO_MANY_BREAKPOINTS: "more than 4 cache_control markers in one request",
     WRITE_WITHOUT_READ: "every request writes cache but reads nothing back",
 }

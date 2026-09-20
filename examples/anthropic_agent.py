@@ -13,14 +13,22 @@ import datetime as dt
 import logging
 
 import anthropic
+import httpx2
 
 import cachelint
-from cachelint.transport import client
+from cachelint.redact import strip_media
+from cachelint.transport import wrap_transport
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-recorder = cachelint.Recorder(cachelint.LogWatcher(), cachelint.JsonlSink("trace.jsonl"))
-claude = anthropic.Anthropic(http_client=client(recorder))
+recorder = cachelint.Recorder()
+recorder.add_sink(cachelint.LogWatcher(index=recorder.index))
+recorder.add_sink(cachelint.JsonlSink("trace.jsonl", redact=strip_media))
+claude = anthropic.Anthropic(
+    http_client=anthropic.DefaultHttpxClient(
+        transport=wrap_transport(httpx2.HTTPTransport(), recorder)
+    )
+)
 
 TOOLS = [
     {

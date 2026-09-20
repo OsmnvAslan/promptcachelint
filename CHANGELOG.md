@@ -6,9 +6,14 @@ Initial release.
 
 - Prefix models for Anthropic Messages (explicit and top-level `cache_control`)
   and OpenAI Chat Completions / Responses (automatic prefix caching).
-- Segment-level prefix diff with block path, character offset and excerpts.
+- Segment-level prefix diff with block path, character offset into the block's
+  own text, before/after excerpts and an estimate of tokens lost.
 - Findings CL001–CL007 (session) and CL010–CL014 (single request).
-- Automatic session grouping with near-match tolerance; explicit `session()` context.
-- `Recorder` with JSONL sink, `LogWatcher` live mode, `assert_cache_stable` for tests.
-- `cachelint.transport`: recording httpx2/httpx transport (sync and async, SSE aware).
+- Sessions: explicit `session()` context, or automatic grouping anchored on the
+  first message block with near-match tolerance for the tools/system head.
+- `Recorder` (thread-safe) with JSONL sink and redactors (`strip_media`,
+  `hash_text`), `LogWatcher` live mode sharing the offline analyzer,
+  `assert_cache_stable` for tests.
+- `cachelint.transport`: recording httpx2 transport (sync and async), SSE aware,
+  decodes compressed responses.
 - CLI: `report`, `lint`, `codes`.

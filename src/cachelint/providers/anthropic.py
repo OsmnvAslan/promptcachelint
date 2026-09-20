@@ -1,10 +1,9 @@
 """Anthropic Messages API.
 
 Render order is ``tools -> system -> messages``. Explicit ``cache_control``
-markers on content blocks (max 4) or a top-level ``cache_control`` (automatic
-placement on the last cacheable block) define where reads can land. The cache
-key is the exact bytes up to each marker, so the marker itself is stripped
-before segments are compared.
+markers on content blocks (max 4 slots, the top-level automatic marker takes
+one) define where reads can land. The cache key is the exact bytes up to each
+marker, so the marker itself is stripped before segments are compared.
 """
 
 from __future__ import annotations
@@ -26,6 +25,19 @@ _MIN_TOKENS: list[tuple[re.Pattern[str], int]] = [
 _DEFAULT_MIN_TOKENS = 1024
 
 MAX_BREAKPOINTS = 4
+TTL_SECONDS = {"5m": 5 * 60, "1h": 60 * 60}
+
+# Top-level parameters and what their change invalidates (from the API's
+# invalidation hierarchy): tools+system+messages, or messages only.
+SCOPE_KEYS: dict[str, str] = {
+    "model": "Caches are model-scoped; a model switch rebuilds everything.",
+    "thinking": "Thinking changes invalidate the messages cache (and more on some models). "
+    "Pin it per route.",
+    "output_config.effort": "Effort changes invalidate the messages cache. Pin it per route, "
+    "or change it via a mid-conversation system message where supported.",
+    "tool_choice": "tool_choice changes invalidate the messages cache (tools+system survive).",
+    "speed": "Toggling speed invalidates the system and messages caches.",
+}
 
 
 def _strip_cache_control(block: Any) -> Any:
@@ -43,8 +55,21 @@ def _marker(block: Any) -> tuple[bool, str | None]:
     return False, None
 
 
+def _block(block: Any) -> tuple[str, str | None]:
+    """(text, block type) for one content block."""
+    if isinstance(block, dict):
+        kind = block.get("type")
+        if kind == "text" and isinstance(block.get("text"), str):
+            return str(block["text"]), "text"
+        return canonical(_strip_cache_control(block)), str(kind) if kind else None
+    return canonical(block), None
+
+
 class AnthropicProvider:
     name = "anthropic"
+    explicit_markers = True
+    cache_granularity_tokens = 0
+    best_effort = False
 
     def matches(self, url: str) -> bool:
         return "anthropic" in url and bool(_URL.search(url))
@@ -66,15 +91,17 @@ class AnthropicProvider:
 
         system = body.get("system")
         if isinstance(system, str):
-            out.append(Segment(path="system", kind="system", text=system))
+            out.append(Segment(path="system", kind="system", text=system, block="text"))
         elif isinstance(system, list):
-            for i, block in enumerate(system):
-                bp, ttl = _marker(block)
+            for i, item in enumerate(system):
+                bp, ttl = _marker(item)
+                text, block = _block(item)
                 out.append(
                     Segment(
                         path=f"system[{i}]",
                         kind="system",
-                        text=_block_text(block),
+                        text=text,
+                        block=block,
                         breakpoint=bp,
                         ttl=ttl,
                     )
@@ -88,17 +115,22 @@ class AnthropicProvider:
                     Segment(
                         path=f"messages[{m}]",
                         kind="message",
-                        text=f"{role}: {content}",
+                        text=content,
+                        role=str(role),
+                        block="text",
                     )
                 )
             elif isinstance(content, list):
-                for c, block in enumerate(content):
-                    bp, ttl = _marker(block)
+                for c, item in enumerate(content):
+                    bp, ttl = _marker(item)
+                    text, block = _block(item)
                     out.append(
                         Segment(
                             path=f"messages[{m}].content[{c}]",
                             kind="message",
-                            text=f"{role}: {_block_text(block)}",
+                            text=text,
+                            role=str(role),
+                            block=block,
                             breakpoint=bp,
                             ttl=ttl,
                         )
@@ -110,11 +142,22 @@ class AnthropicProvider:
         for i, seg in enumerate(segments):
             if seg.breakpoint:
                 last = i + 1
-        top_level = isinstance(body.get("cache_control"), dict)
-        if top_level:
+        if isinstance(body.get("cache_control"), dict):
             # Automatic caching: marker lands on the last cacheable block.
             return max(last, len(segments))
         return last
+
+    def marker_slots(self, body: dict[str, Any], segments: list[Segment]) -> int:
+        explicit = sum(1 for seg in segments if seg.breakpoint)
+        automatic = 1 if isinstance(body.get("cache_control"), dict) else 0
+        return explicit + automatic
+
+    def ttl_seconds(self, segments: list[Segment]) -> int:
+        ttl = "5m"
+        for seg in segments:
+            if seg.breakpoint and seg.ttl:
+                ttl = seg.ttl
+        return TTL_SECONDS.get(ttl, TTL_SECONDS["5m"])
 
     def usage(self, response: dict[str, Any]) -> Usage | None:
         u = response.get("usage")
@@ -149,23 +192,13 @@ class AnthropicProvider:
 
     def scope(self, body: dict[str, Any]) -> dict[str, str]:
         out: dict[str, str] = {}
-        for key in ("model", "thinking"):
+        for key in ("model", "thinking", "tool_choice", "speed"):
             if key in body:
                 out[key] = canonical(body[key])
         effort = (body.get("output_config") or {}).get("effort")
         if effort is not None:
             out["output_config.effort"] = canonical(effort)
         return out
-
-
-def _block_text(block: Any) -> str:
-    if (
-        isinstance(block, dict)
-        and block.get("type") == "text"
-        and isinstance(block.get("text"), str)
-    ):
-        return str(block["text"])
-    return canonical(_strip_cache_control(block))
 
 
 def _usage(u: dict[str, Any]) -> Usage | None:

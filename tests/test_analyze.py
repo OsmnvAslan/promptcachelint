@@ -129,6 +129,7 @@ def test_explicit_sessions_are_respected_and_auto_grouping_separates_unrelated()
     other = anthropic_body(system="completely different " * 100, user="x")
     report = analyze([rec(a, 1.0), rec(b, 2.0), rec(other, 3.0)])
     assert len(report.sessions) == 2
+    assert report.auto_grouped
 
     report = analyze([rec(a, 1.0, session_id="s1"), rec(b, 2.0, session_id="s2")])
     assert {s.id for s in report.sessions} == {"s1", "s2"}
@@ -136,9 +137,7 @@ def test_explicit_sessions_are_respected_and_auto_grouping_separates_unrelated()
 
 
 def test_custom_index_and_json_output() -> None:
-    report = analyze(
-        [rec(turn(0), 1.0), rec(turn(1), 2.0)], index=SessionIndex(min_shared_fraction=0.1)
-    )
+    report = analyze([rec(turn(0), 1.0), rec(turn(1), 2.0)], index=SessionIndex())
     d = report.to_dict()
     assert d["totals"]["requests"] == 2
     assert d["sessions"][0]["requests"][1]["diff"] == {

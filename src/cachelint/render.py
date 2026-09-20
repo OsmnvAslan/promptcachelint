@@ -27,8 +27,9 @@ def _fmt_request(r: RequestReport) -> list[str]:
     )
     lines = [head]
     if r.diff is not None and r.diff.broken:
+        who = f" ({r.diff.role})" if r.diff.role else ""
         lines.append(
-            f"      ✗ prefix broken at {r.diff.path} +{r.diff.offset} "
+            f"      ✗ prefix broken at {r.diff.path}{who} +{r.diff.offset} "
             f"(~{r.diff.lost_tokens_estimate} tokens lost, estimate)"
         )
         lines.append(f"        was: {r.diff.before!r}")
@@ -55,6 +56,11 @@ def render_text(report: Report) -> str:
     )
     if t.with_usage < t.requests:
         lines.append(f"  ({t.requests - t.with_usage} request(s) without usage data)")
+    if report.auto_grouped:
+        lines.append(
+            "  (sessions grouped automatically by first message; use cachelint.session(id) "
+            "for exact grouping)"
+        )
     for s in report.sessions:
         st = s.totals
         lines.append("")

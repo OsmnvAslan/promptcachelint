@@ -23,6 +23,15 @@ class Provider(Protocol):
     """
 
     name: str
+    #: True when reads can only land at explicit markers (Anthropic); False for
+    #: automatic prefix caching (OpenAI), where any prefix may be served.
+    explicit_markers: bool
+    #: Smallest unit the provider caches; divergences that lose less than this
+    #: are not reported as breaks on automatic-caching providers.
+    cache_granularity_tokens: int
+    #: Whether the provider documents its cache as best-effort (misses on an
+    #: intact prefix are informational, not warnings).
+    best_effort: bool
 
     def matches(self, url: str) -> bool:
         """True if requests to ``url`` belong to this provider."""
@@ -34,6 +43,14 @@ class Provider(Protocol):
 
     def cacheable_segments(self, body: dict[str, Any], segments: list[Segment]) -> int:
         """How many leading segments the provider would try to serve from cache."""
+        ...
+
+    def marker_slots(self, body: dict[str, Any], segments: list[Segment]) -> int:
+        """Breakpoint slots used by this request (explicit markers + automatic)."""
+        ...
+
+    def ttl_seconds(self, segments: list[Segment]) -> int:
+        """How long an entry written by this request stays readable."""
         ...
 
     def usage(self, response: dict[str, Any]) -> Usage | None:

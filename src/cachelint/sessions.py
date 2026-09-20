@@ -1,14 +1,24 @@
 """Grouping requests into sessions.
 
 Two modes: explicit (``with cachelint.session("id"):`` or ``Record.session_id``)
-and automatic, where a request joins the most recent session whose prefix it
-continues. Automatic grouping is a heuristic and says so in the report.
+and automatic. Automatic grouping is a heuristic and the report says so.
+
+The automatic rule: a request continues a session when
+
+* its **first message block** is byte-identical to the session's first message
+  block (the *anchor*; unrelated conversations that share a system prompt
+  differ here), and
+* the tools/system head is the same or *nearly* the same (a timestamp or a
+  version bump in the system prompt must keep the request in its session,
+  otherwise the break it causes could never be seen).
+
+Sessions are indexed by anchor, so assignment is O(1) in the number of open
+sessions rather than a scan.
 """
 
 from __future__ import annotations
 
 import contextvars
-import difflib
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -36,6 +46,13 @@ def current_session() -> str | None:
     return _current.get()
 
 
+# A head segment (tool/system) still "belongs" when most of its bytes match.
+NEAR_MATCH = 0.6
+MAX_OPEN_SESSIONS = 4096
+
+AnchorKey = tuple[str, tuple[str, str | None, str | None, str] | None]
+
+
 @dataclass(slots=True)
 class _Open:
     id: str
@@ -43,6 +60,55 @@ class _Open:
     segments: list[Segment]
     last_at: float
     explicit: bool
+    anchor: AnchorKey
+
+
+def _split(segments: list[Segment]) -> tuple[list[Segment], list[Segment]]:
+    head = [s for s in segments if s.kind != "message"]
+    body = [s for s in segments if s.kind == "message"]
+    return head, body
+
+
+def _anchor(provider: str, segments: list[Segment]) -> AnchorKey:
+    _, body = _split(segments)
+    return (provider, body[0].key if body else None)
+
+
+def _common_prefix(x: str, y: str) -> int:
+    n = min(len(x), len(y))
+    i = 0
+    while i < n and x[i] == y[i]:
+        i += 1
+    return i
+
+
+def _near(x: Segment, y: Segment) -> bool:
+    if x.kind != y.kind or x.block != y.block:
+        return False
+    if x.text == y.text:
+        return True
+    longest = max(len(x.text), len(y.text)) or 1
+    return _common_prefix(x.text, y.text) / longest >= NEAR_MATCH
+
+
+def continues(prev: list[Segment], new: list[Segment]) -> bool:
+    """True if ``new`` looks like the next request of the conversation ``prev`` came from."""
+    prev_head, prev_body = _split(prev)
+    new_head, new_body = _split(new)
+
+    if prev_body and (not new_body or not prev_body[0].same(new_body[0])):
+        return False
+
+    if prev_head:
+        # Align heads pairwise; tolerate near matches and a differing tail (tool added).
+        matched = 0
+        for x, y in zip(prev_head, new_head, strict=False):
+            if not _near(x, y):
+                break
+            matched += 1
+        if matched < max(1, (len(prev_head) + 1) // 2):
+            return False
+    return True
 
 
 @dataclass(slots=True)
@@ -50,8 +116,9 @@ class SessionIndex:
     """Assigns a session id to each incoming request."""
 
     max_gap_seconds: float = 6 * 3600
-    min_shared_fraction: float = 0.5
-    _open: list[_Open] = field(default_factory=list)
+    _open: dict[str, _Open] = field(default_factory=dict)
+    _by_anchor: dict[AnchorKey, list[str]] = field(default_factory=dict)
+    _order: list[str] = field(default_factory=list)
 
     def assign(
         self,
@@ -64,77 +131,44 @@ class SessionIndex:
             self._touch(explicit, provider, segments, at, explicit=True)
             return explicit
 
-        best: _Open | None = None
-        best_score = 0.0
-        for s in self._open:
-            if s.provider != provider or s.explicit or at - s.last_at > self.max_gap_seconds:
+        anchor = _anchor(provider, segments)
+        for sid in reversed(self._by_anchor.get(anchor, [])):
+            s = self._open[sid]
+            if s.explicit or at - s.last_at > self.max_gap_seconds:
                 continue
-            score = _similarity(s.segments, segments)
-            if score <= 0 or score < max(1.0, len(s.segments) * self.min_shared_fraction):
-                continue
-            if score > best_score:
-                best, best_score = s, score
+            if continues(s.segments, segments):
+                self._touch(sid, provider, segments, at, explicit=False)
+                return sid
 
-        sid = best.id if best else uuid.uuid4().hex
+        sid = uuid.uuid4().hex
         self._touch(sid, provider, segments, at, explicit=False)
         return sid
+
+    def is_explicit(self, session_id: str) -> bool:
+        s = self._open.get(session_id)
+        return bool(s and s.explicit)
 
     def _touch(
         self, sid: str, provider: str, segments: list[Segment], at: float, *, explicit: bool
     ) -> None:
-        for s in self._open:
-            if s.id == sid:
-                s.segments = segments
-                s.last_at = at
-                return
-        self._open.append(_Open(sid, provider, segments, at, explicit))
-        self._open = self._open[-256:]
+        anchor = _anchor(provider, segments)
+        s = self._open.get(sid)
+        if s is None:
+            s = _Open(sid, provider, segments, at, explicit, anchor)
+            self._open[sid] = s
+            self._order.append(sid)
+            self._by_anchor.setdefault(anchor, []).append(sid)
+            self._evict()
+            return
+        if s.anchor != anchor:
+            self._by_anchor[s.anchor].remove(sid)
+            self._by_anchor.setdefault(anchor, []).append(sid)
+            s.anchor = anchor
+        s.segments = segments
+        s.last_at = at
 
-
-# A modified segment still "belongs" to the same session when most of its bytes
-# match: that is exactly the case of a prefix broken by a timestamp or a version
-# bump, and the whole point is to keep such requests together so the break is seen.
-_NEAR_MATCH = 0.6
-
-
-def _similarity(a: list[Segment], b: list[Segment]) -> float:
-    """How much of ``a`` reappears in ``b``: exact segments count 1, near matches too."""
-    keys_a: list[tuple[str, str]] = [(x.kind, x.text) for x in a]
-    keys_b: list[tuple[str, str]] = [(y.kind, y.text) for y in b]
-    matcher = difflib.SequenceMatcher(None, keys_a, keys_b, autojunk=False)
-    matched_a: set[int] = set()
-    for block in matcher.get_matching_blocks():
-        matched_a.update(range(block.a, block.a + block.size))
-    score = float(len(matched_a))
-
-    # One near match for each unmatched segment of ``a`` that has a same-kind
-    # segment in ``b`` sharing most of its leading bytes.
-    unmatched_b = [j for j, _ in enumerate(b) if j not in _matched_b(matcher)]
-    for i, x in enumerate(a):
-        if i in matched_a:
-            continue
-        for j in unmatched_b:
-            y = b[j]
-            if y.kind != x.kind:
-                continue
-            longest = max(len(x.text), len(y.text)) or 1
-            if _common_prefix(x.text, y.text) / longest >= _NEAR_MATCH:
-                score += 1.0
-                unmatched_b.remove(j)
-                break
-    return score
-
-
-def _matched_b(matcher: difflib.SequenceMatcher[tuple[str, str]]) -> set[int]:
-    out: set[int] = set()
-    for block in matcher.get_matching_blocks():
-        out.update(range(block.b, block.b + block.size))
-    return out
-
-
-def _common_prefix(x: str, y: str) -> int:
-    n = min(len(x), len(y))
-    i = 0
-    while i < n and x[i] == y[i]:
-        i += 1
-    return i
+    def _evict(self) -> None:
+        while len(self._order) > MAX_OPEN_SESSIONS:
+            sid = self._order.pop(0)
+            s = self._open.pop(sid)
+            self._by_anchor[s.anchor].remove(sid)

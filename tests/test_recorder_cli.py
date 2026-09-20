@@ -95,7 +95,8 @@ def test_assert_cache_stable() -> None:
 
 def test_log_watcher_logs_breaks_once_and_static_once(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.DEBUG, logger="cachelint")
-    r = Recorder(LogWatcher())
+    r = Recorder()
+    r.add_sink(LogWatcher(index=r.index))
     with session("s"):
         r.record("anthropic", anthropic_body(system="short " + "2026-09-20T10:00:00Z"))
         r.record("anthropic", anthropic_body(system="short " + "2026-09-20T10:01:00Z"))

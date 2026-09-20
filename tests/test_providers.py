@@ -25,8 +25,8 @@ class TestAnthropic:
             "messages[1].content[0]",
         ]
         assert [s.kind for s in segs] == ["tool", "tool", "system", "message", "message"]
-        assert segs[3].text == "assistant: hi"
-        assert segs[4].text == "user: hello"
+        assert segs[3].text == "hi" and segs[3].role == "assistant"
+        assert segs[4].text == "hello" and segs[4].role == "user"
 
     def test_markers_are_stripped_from_text_but_kept_as_flags(self) -> None:
         marked = anthropic_body(mark_system=True, ttl="1h")
@@ -128,9 +128,9 @@ class TestOpenAI:
             "messages[1].content[0]",
             "messages[2]",
         ]
-        assert segs[1].kind == "system" and segs[1].text == "system: sys"
-        assert segs[2].text == "user: hi"
-        assert "c1" in segs[3].text
+        assert segs[1].kind == "system" and segs[1].text == "sys"
+        assert segs[2].text == "hi" and segs[2].role == "user"
+        assert "c1" in segs[3].text and segs[3].block == "tool_calls"
         assert self.p.cacheable_segments(body, segs) == 4
 
     def test_responses_segments(self) -> None:
@@ -144,7 +144,7 @@ class TestOpenAI:
         }
         segs = self.p.segments(body)
         assert [s.path for s in segs] == ["instructions", "input[0].content[0]", "input[1]"]
-        assert segs[1].text == "user: hi"
+        assert segs[1].text == "hi" and segs[1].role == "user"
 
     def test_usage_normalization(self) -> None:
         chat = self.p.usage(

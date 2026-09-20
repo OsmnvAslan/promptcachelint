@@ -3,7 +3,8 @@
 Caching is automatic: the server reuses the longest previously seen prefix
 (in 128-token steps, from 1024 tokens). There are no markers, so every
 segment is potentially cacheable and the only things that matter are prefix
-stability and ``prompt_cache_key`` routing.
+stability and ``prompt_cache_key`` routing. The cache is documented as
+best-effort and entries live 5-10 minutes (longer off-peak).
 """
 
 from __future__ import annotations
@@ -16,9 +17,27 @@ from cachelint.providers.base import canonical
 
 _URL = re.compile(r"/v1/(chat/completions|responses)(?:\?|$)")
 
+SCOPE_KEYS: dict[str, str] = {
+    "model": "Caches are model-scoped; a model switch rebuilds everything.",
+    "prompt_cache_key": "prompt_cache_key routes to a cache shard; changing it per request "
+    "defeats sharing.",
+}
+
+
+def _part(part: Any) -> tuple[str, str | None]:
+    if isinstance(part, dict):
+        kind = part.get("type")
+        if kind in ("text", "input_text", "output_text") and isinstance(part.get("text"), str):
+            return str(part["text"]), str(kind)
+        return canonical(part), str(kind) if kind else None
+    return canonical(part), None
+
 
 class OpenAIProvider:
     name = "openai"
+    explicit_markers = False
+    cache_granularity_tokens = 128
+    best_effort = True
 
     def matches(self, url: str) -> bool:
         return "openai" in url and bool(_URL.search(url))
@@ -36,24 +55,42 @@ class OpenAIProvider:
     def _chat_segments(body: dict[str, Any]) -> list[Segment]:
         out: list[Segment] = []
         for m, message in enumerate(body.get("messages") or []):
-            role = message.get("role", "?") if isinstance(message, dict) else "?"
+            role = str(message.get("role", "?")) if isinstance(message, dict) else "?"
             content = message.get("content") if isinstance(message, dict) else None
             kind: SegmentKind = "system" if role in ("system", "developer") else "message"
+            seg_role = None if kind == "system" else role
             if isinstance(content, list):
                 for c, part in enumerate(content):
+                    text, block = _part(part)
                     out.append(
                         Segment(
                             path=f"messages[{m}].content[{c}]",
                             kind=kind,
-                            text=f"{role}: {_part_text(part)}",
+                            text=text,
+                            role=seg_role,
+                            block=block,
                         )
                     )
+                continue
+            rest = {k: v for k, v in message.items() if k not in ("role", "content")}
+            if isinstance(content, str) and not rest:
+                out.append(
+                    Segment(
+                        path=f"messages[{m}]", kind=kind, text=content, role=seg_role, block="text"
+                    )
+                )
             else:
-                rest = {k: v for k, v in message.items() if k not in ("role", "content")}
-                text = content if isinstance(content, str) else ""
-                if rest:
-                    text = f"{text}{canonical(rest)}"
-                out.append(Segment(path=f"messages[{m}]", kind=kind, text=f"{role}: {text}"))
+                # tool_calls / tool results / refusals: one structured block
+                payload = {k: v for k, v in message.items() if k != "role"}
+                out.append(
+                    Segment(
+                        path=f"messages[{m}]",
+                        kind=kind,
+                        text=canonical(payload),
+                        role=seg_role,
+                        block="tool_calls" if "tool_calls" in rest else "structured",
+                    )
+                )
         return out
 
     @staticmethod
@@ -61,37 +98,59 @@ class OpenAIProvider:
         out: list[Segment] = []
         instructions = body.get("instructions")
         if isinstance(instructions, str):
-            out.append(Segment(path="instructions", kind="system", text=instructions))
+            out.append(Segment(path="instructions", kind="system", text=instructions, block="text"))
         items = body.get("input")
         if isinstance(items, str):
-            out.append(Segment(path="input", kind="message", text=f"user: {items}"))
+            out.append(Segment(path="input", kind="message", text=items, role="user", block="text"))
         elif isinstance(items, list):
             for i, item in enumerate(items):
-                role = item.get("role", item.get("type", "?")) if isinstance(item, dict) else "?"
-                content = item.get("content") if isinstance(item, dict) else None
+                if not isinstance(item, dict):
+                    out.append(Segment(path=f"input[{i}]", kind="message", text=canonical(item)))
+                    continue
+                role = item.get("role")
+                content = item.get("content")
                 if isinstance(content, list):
                     for c, part in enumerate(content):
+                        text, block = _part(part)
                         out.append(
                             Segment(
                                 path=f"input[{i}].content[{c}]",
                                 kind="message",
-                                text=f"{role}: {_part_text(part)}",
+                                text=text,
+                                role=str(role) if role else None,
+                                block=block,
                             )
                         )
                 elif isinstance(content, str):
                     out.append(
-                        Segment(path=f"input[{i}]", kind="message", text=f"{role}: {content}")
+                        Segment(
+                            path=f"input[{i}]",
+                            kind="message",
+                            text=content,
+                            role=str(role) if role else None,
+                            block="text",
+                        )
                     )
                 else:
                     out.append(
                         Segment(
-                            path=f"input[{i}]", kind="message", text=f"{role}: {canonical(item)}"
+                            path=f"input[{i}]",
+                            kind="message",
+                            text=canonical(item),
+                            role=str(role) if role else None,
+                            block=str(item.get("type")) if item.get("type") else None,
                         )
                     )
         return out
 
     def cacheable_segments(self, body: dict[str, Any], segments: list[Segment]) -> int:
         return len(segments)
+
+    def marker_slots(self, body: dict[str, Any], segments: list[Segment]) -> int:
+        return 0
+
+    def ttl_seconds(self, segments: list[Segment]) -> int:
+        return 10 * 60
 
     def usage(self, response: dict[str, Any]) -> Usage | None:
         u = response.get("usage")
@@ -118,14 +177,6 @@ class OpenAIProvider:
             if key in body:
                 out[key] = canonical(body[key])
         return out
-
-
-def _part_text(part: Any) -> str:
-    if isinstance(part, dict):
-        for key in ("text", "input_text"):
-            if isinstance(part.get(key), str) and part.get("type") in (key, "text", "input_text"):
-                return str(part[key])
-    return canonical(part)
 
 
 def _usage(u: dict[str, Any]) -> Usage | None:

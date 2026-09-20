@@ -10,7 +10,7 @@ from pathlib import Path
 from cachelint import findings as F
 from cachelint.analyze import analyze
 from cachelint.detectors import lint_request
-from cachelint.providers import get_provider
+from cachelint.providers import get_provider, provider_names
 from cachelint.recorder import load_jsonl
 
 
@@ -29,22 +29,19 @@ def main(argv: list[str] | None = None) -> int:
 
     lint = sub.add_parser("lint", help="static checks on one request body (JSON file or '-')")
     lint.add_argument("request", type=str)
-    lint.add_argument("--provider", required=True, choices=["anthropic", "openai"])
+    lint.add_argument("--provider", required=True, help=f"one of: {', '.join(provider_names())}")
     lint.add_argument("--json", action="store_true")
 
-    codes = sub.add_parser("codes", help="list finding codes")
+    sub.add_parser("codes", help="list finding codes")
 
     args = parser.parse_args(argv)
     if args.cmd == "report":
         return _report(args)
     if args.cmd == "lint":
         return _lint(args)
-    if args.cmd == "codes":
-        for code, desc in sorted(F.DESCRIPTIONS.items()):
-            print(f"{code}  {desc}")
-        return 0
-    codes.print_help()
-    return 2
+    for code, desc in sorted(F.DESCRIPTIONS.items()):
+        print(f"{code}  {desc}")
+    return 0
 
 
 def _report(args: argparse.Namespace) -> int:
@@ -58,9 +55,13 @@ def _report(args: argparse.Namespace) -> int:
 
 
 def _lint(args: argparse.Namespace) -> int:
+    try:
+        provider = get_provider(args.provider)
+    except ValueError as exc:
+        print(f"cachelint: {exc}", file=sys.stderr)
+        return 2
     raw = sys.stdin.read() if args.request == "-" else Path(args.request).read_text("utf-8")
-    body = json.loads(raw)
-    findings = lint_request(get_provider(args.provider), body)
+    findings = lint_request(provider, json.loads(raw))
     if args.json:
         print(json.dumps([f.to_dict() for f in findings], ensure_ascii=False, indent=2))
     elif not findings:

@@ -19,6 +19,10 @@ def get_provider(name: str) -> Provider:
         raise ValueError(f"unknown provider {name!r}; known: {sorted(_REGISTRY)}") from None
 
 
+def provider_names() -> list[str]:
+    return sorted(_REGISTRY)
+
+
 def detect_provider(url: str) -> Provider | None:
     for provider in _REGISTRY.values():
         if provider.matches(url):
@@ -38,5 +42,6 @@ __all__ = [
     "canonical",
     "detect_provider",
     "get_provider",
+    "provider_names",
     "register_provider",
 ]

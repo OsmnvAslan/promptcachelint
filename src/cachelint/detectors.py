@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from cachelint import findings as F
-from cachelint.model import Segment, estimate_tokens
+from cachelint.model import Segment, estimate_tokens_from_chars
 from cachelint.providers.anthropic import MAX_BREAKPOINTS
 from cachelint.providers.base import Provider
 
@@ -89,19 +89,20 @@ def structure(
     out: list[F.Finding] = []
     model = body.get("model") if isinstance(body.get("model"), str) else None
     minimum = provider.min_prefix_tokens(model)
-    prefix_chars = sum(seg.chars for seg in segments[:cacheable])
-    prefix_tokens = estimate_tokens("x" * prefix_chars) if prefix_chars else 0
-    total_chars = sum(seg.chars for seg in segments)
-    total_tokens = estimate_tokens("x" * total_chars) if total_chars else 0
+    prefix_tokens = estimate_tokens_from_chars(sum(seg.chars for seg in segments[:cacheable]))
+    total_tokens = estimate_tokens_from_chars(sum(seg.chars for seg in segments))
 
-    if provider.name == "anthropic":
-        markers = sum(1 for seg in segments if seg.breakpoint)
+    if provider.explicit_markers:
+        markers = provider.marker_slots(body, segments)
         if markers > MAX_BREAKPOINTS:
             out.append(
                 F.Finding(
                     code=F.TOO_MANY_BREAKPOINTS,
                     severity="error",
-                    message=f"{markers} cache_control markers; the API allows {MAX_BREAKPOINTS}",
+                    message=(
+                        f"{markers} cache_control slots used (explicit markers plus the "
+                        f"top-level automatic one); the API allows {MAX_BREAKPOINTS}"
+                    ),
                     hint="One per stability boundary: tools+system, shared context, last turn.",
                     data={"markers": markers},
                 )

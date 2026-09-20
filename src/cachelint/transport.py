@@ -1,27 +1,33 @@
-"""httpx / httpx2 transport that records provider requests as they go by.
+"""httpx2 transport that records provider requests as they go by.
 
-The Anthropic and OpenAI SDKs both accept an ``http_client``; hand them one
-built here and every Messages / Chat Completions / Responses call is recorded
-with its usage, streaming or not, without touching SDK internals::
+The Anthropic and OpenAI SDKs both accept an ``http_client`` built on
+``httpx2``; wrap its transport and every Messages / Chat Completions /
+Responses call is recorded with its usage, streaming or not, without touching
+SDK internals::
 
+    import anthropic, httpx2
     import cachelint
-    from cachelint.transport import client
+    from cachelint.transport import wrap_transport
 
     recorder = cachelint.Recorder(cachelint.LogWatcher())
-    anthropic_client = anthropic.Anthropic(http_client=client(recorder))
+    claude = anthropic.Anthropic(
+        http_client=anthropic.DefaultHttpxClient(
+            transport=wrap_transport(httpx2.HTTPTransport(), recorder)
+        )
+    )
 
-``httpx2`` (what current SDKs depend on) is preferred; ``httpx`` is used when
-that is what is installed. Nothing here ever raises into the caller: a body
-that cannot be parsed is simply not recorded.
+Nothing here ever raises into the caller: a body that cannot be parsed is
+simply not recorded (at DEBUG level in the ``cachelint.transport`` logger).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import types
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
+
+import httpx2 as hx
 
 from cachelint.providers import detect_provider
 from cachelint.providers.base import Provider
@@ -30,32 +36,14 @@ from cachelint.recorder import Recorder
 log = logging.getLogger("cachelint.transport")
 
 
-def _load_httpx() -> types.ModuleType:
-    try:
-        import httpx2
-
-        return httpx2
-    except ImportError:  # pragma: no cover - depends on the environment
-        try:
-            import httpx
-
-            return httpx
-        except ImportError as exc:
-            raise ImportError(
-                "cachelint.transport needs httpx2 or httpx: pip install 'cachelint[httpx2]'"
-            ) from exc
-
-
-hx = _load_httpx()
-
-
 # ----------------------------------------------------------------- parsing
 
 
 def parse_sse(data: bytes) -> list[dict[str, Any]]:
     """JSON payloads of the ``data:`` lines of an SSE body (non-JSON lines skipped)."""
     events: list[dict[str, Any]] = []
-    for raw_block in data.decode("utf-8", errors="replace").split("\n\n"):
+    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    for raw_block in text.split("\n\n"):
         payload = "\n".join(
             line[5:].lstrip() for line in raw_block.splitlines() if line.startswith("data:")
         )
@@ -80,18 +68,27 @@ def _request_body(content: bytes) -> dict[str, Any] | None:
     return body if isinstance(body, dict) else None
 
 
+def _decode(status: int, headers: Any, data: bytes) -> bytes:
+    """Apply the response's content-encoding (gzip, br, ...) to the raw wire bytes."""
+    if not headers.get("content-encoding"):
+        return data
+    return bytes(hx.Response(status, headers=headers, content=data).read())
+
+
 def _record(
     recorder: Recorder,
     provider: Provider,
     body: dict[str, Any],
     url: str,
     status: int,
-    content_type: str,
+    headers: Any,
     data: bytes,
 ) -> None:
     if status < 200 or status >= 300:
         return  # errors never touch the cache
     try:
+        data = _decode(status, headers, data)
+        content_type = headers.get("content-type", "")
         if "text/event-stream" in content_type:
             recorder.record(provider.name, body, sse_events=parse_sse(data), stream=True, url=url)
         else:
@@ -110,7 +107,7 @@ def _record(
 # ----------------------------------------------------------------- streams
 
 
-class _TeeStream(hx.SyncByteStream):  # type: ignore[name-defined]
+class _TeeStream(hx.SyncByteStream):
     def __init__(self, inner: Any, on_done: Callable[[bytes], None]) -> None:
         self._inner = inner
         self._on_done = on_done
@@ -136,7 +133,7 @@ class _TeeStream(hx.SyncByteStream):  # type: ignore[name-defined]
         self._on_done(b"".join(self._chunks))
 
 
-class _AsyncTeeStream(hx.AsyncByteStream):  # type: ignore[name-defined]
+class _AsyncTeeStream(hx.AsyncByteStream):
     def __init__(self, inner: Any, on_done: Callable[[bytes], None]) -> None:
         self._inner = inner
         self._on_done = on_done
@@ -165,14 +162,14 @@ class _AsyncTeeStream(hx.AsyncByteStream):  # type: ignore[name-defined]
 # -------------------------------------------------------------- transports
 
 
-class RecordingTransport(hx.BaseTransport):  # type: ignore[name-defined]
+class RecordingTransport(hx.BaseTransport):
     """Sync transport wrapper. Requests to unknown URLs pass through untouched."""
 
-    def __init__(self, inner: Any, recorder: Recorder) -> None:
+    def __init__(self, inner: hx.BaseTransport, recorder: Recorder) -> None:
         self._inner = inner
         self.recorder = recorder
 
-    def handle_request(self, request: Any) -> Any:
+    def handle_request(self, request: hx.Request) -> hx.Response:
         url = str(request.url)
         provider = detect_provider(url)
         if provider is None:
@@ -184,15 +181,15 @@ class RecordingTransport(hx.BaseTransport):  # type: ignore[name-defined]
         if body is None:
             return response
 
-        content_type = response.headers.get("content-type", "")
+        headers = response.headers
         status = response.status_code
 
         def done(data: bytes) -> None:
-            _record(self.recorder, provider, body, url, status, content_type, data)
+            _record(self.recorder, provider, body, url, status, headers, data)
 
         return hx.Response(
             status_code=status,
-            headers=response.headers,
+            headers=headers,
             stream=_TeeStream(response.stream, done),
             request=request,
             extensions=response.extensions,
@@ -202,14 +199,14 @@ class RecordingTransport(hx.BaseTransport):  # type: ignore[name-defined]
         self._inner.close()
 
 
-class AsyncRecordingTransport(hx.AsyncBaseTransport):  # type: ignore[name-defined]
+class AsyncRecordingTransport(hx.AsyncBaseTransport):
     """Async transport wrapper. Requests to unknown URLs pass through untouched."""
 
-    def __init__(self, inner: Any, recorder: Recorder) -> None:
+    def __init__(self, inner: hx.AsyncBaseTransport, recorder: Recorder) -> None:
         self._inner = inner
         self.recorder = recorder
 
-    async def handle_async_request(self, request: Any) -> Any:
+    async def handle_async_request(self, request: hx.Request) -> hx.Response:
         url = str(request.url)
         provider = detect_provider(url)
         if provider is None:
@@ -221,15 +218,15 @@ class AsyncRecordingTransport(hx.AsyncBaseTransport):  # type: ignore[name-defin
         if body is None:
             return response
 
-        content_type = response.headers.get("content-type", "")
+        headers = response.headers
         status = response.status_code
 
         def done(data: bytes) -> None:
-            _record(self.recorder, provider, body, url, status, content_type, data)
+            _record(self.recorder, provider, body, url, status, headers, data)
 
         return hx.Response(
             status_code=status,
-            headers=response.headers,
+            headers=headers,
             stream=_AsyncTeeStream(response.stream, done),
             request=request,
             extensions=response.extensions,
@@ -242,7 +239,12 @@ class AsyncRecordingTransport(hx.AsyncBaseTransport):  # type: ignore[name-defin
 # ----------------------------------------------------------------- helpers
 
 
-def wrap_transport(inner: Any, recorder: Recorder, *, use_async: bool | None = None) -> Any:
+def wrap_transport(
+    inner: hx.BaseTransport | hx.AsyncBaseTransport,
+    recorder: Recorder,
+    *,
+    use_async: bool | None = None,
+) -> RecordingTransport | AsyncRecordingTransport:
     """Wrap an existing transport.
 
     Sync when it implements ``handle_request``, async when it only implements
@@ -252,21 +254,25 @@ def wrap_transport(inner: Any, recorder: Recorder, *, use_async: bool | None = N
     if use_async is None:
         use_async = not isinstance(inner, hx.BaseTransport)
     if use_async:
-        return AsyncRecordingTransport(inner, recorder)
-    return RecordingTransport(inner, recorder)
+        return AsyncRecordingTransport(inner, recorder)  # type: ignore[arg-type]
+    return RecordingTransport(inner, recorder)  # type: ignore[arg-type]
 
 
-def client(recorder: Recorder, *, transport: Any = None, **client_kwargs: Any) -> Any:
-    """An ``httpx2.Client`` (or ``httpx.Client``) that records provider traffic.
+def client(
+    recorder: Recorder, *, transport: hx.BaseTransport | None = None, **client_kwargs: Any
+) -> hx.Client:
+    """A plain ``httpx2.Client`` that records provider traffic.
 
-    Pass it to an SDK as ``http_client=``. ``transport`` defaults to the
-    library's ``HTTPTransport``; extra keyword arguments go to the client.
+    For SDKs prefer their own client class with :func:`wrap_transport` (see the
+    module docstring) so the SDK's connection limits and timeouts are kept.
     """
     inner = transport if transport is not None else hx.HTTPTransport()
     return hx.Client(transport=RecordingTransport(inner, recorder), **client_kwargs)
 
 
-def async_client(recorder: Recorder, *, transport: Any = None, **client_kwargs: Any) -> Any:
+def async_client(
+    recorder: Recorder, *, transport: hx.AsyncBaseTransport | None = None, **client_kwargs: Any
+) -> hx.AsyncClient:
     """Async counterpart of :func:`client`."""
     inner = transport if transport is not None else hx.AsyncHTTPTransport()
     return hx.AsyncClient(transport=AsyncRecordingTransport(inner, recorder), **client_kwargs)

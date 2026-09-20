@@ -66,6 +66,7 @@ def rec(
         model=body.get("model"),
         usage=usage,
         session_id=session_id,
+        session_explicit=session_id is not None,
     )
 
 

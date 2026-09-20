@@ -31,7 +31,6 @@ Changelog = "https://github.com/OsmnvAslan/cachelint/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 httpx2 = ["httpx2>=2.0"]
-httpx = ["httpx>=0.27"]
 
 [project.scripts]
 cachelint = "cachelint.cli:main"
@@ -71,12 +70,3 @@ select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
 strict = true
 python_version = "3.11"
 
-[[tool.mypy.overrides]]
-# The transport subclasses a runtime-selected module (httpx2 or httpx).
-module = "cachelint.transport"
-disallow_subclassing_any = false
-warn_return_any = false
-
-[[tool.mypy.overrides]]
-module = ["httpx", "httpx2"]
-ignore_missing_imports = true
