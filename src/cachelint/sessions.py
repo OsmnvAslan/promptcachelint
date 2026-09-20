@@ -12,14 +12,17 @@ block** is byte-identical to the session's (the *anchor*) and either
 * the body is repeated exactly (a retry).
 
 Anything else with the same opener is another conversation: two users who
-both start with "hi" stay apart from their second turn on. The price is that
-a history *edited* mid-way is not followed in automatic mode (it looks like a
-different conversation); explicit sessions catch it.
+both start with "hi" stay apart from their second turn on.
 
-One more shape is recognised: **sliding-window history**. When no session
-anchors on the new first block, sessions whose 2nd-4th message blocks equal it
-are tried; a match means the oldest turns were dropped, and the request joins
-that session so the rewrite of the prefix is reported rather than hidden.
+Two more shapes are recognised so that the rewrite they cause is reported
+rather than hidden:
+
+* **sliding-window history**: no session anchors on the new first block, but
+  one has it among its first ``ANCHOR_BLOCKS`` message blocks (the oldest
+  turns were dropped);
+* **edited history**: same opener, head near, body not shorter, and most of
+  the old blocks still present in order (old tool results truncated, a turn
+  summarised).
 
 Sessions are indexed by hashes of their first message blocks, so assignment is
 O(1) in the number of open sessions.
@@ -28,6 +31,7 @@ O(1) in the number of open sessions.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -58,8 +62,13 @@ def current_session() -> str | None:
 # A head segment (tool/system) still "belongs" when most of its bytes match.
 NEAR_MATCH = 0.6
 MAX_OPEN_SESSIONS = 4096
-#: How many leading message blocks are indexed (sliding-window detection depth).
-ANCHOR_BLOCKS = 4
+#: How many leading message blocks are indexed: the depth at which a sliding
+#: history window is still recognised (one agent exchange is four blocks).
+ANCHOR_BLOCKS = 16
+#: Share of the previous history that must reappear, in order, for a request
+#: with the same opener to count as that history *edited* rather than another
+#: conversation.
+EDITED_MIN_SHARE = 0.6
 
 
 @dataclass(slots=True)
@@ -84,7 +93,12 @@ def split(segments: list[Segment]) -> tuple[list[Segment], list[Segment]]:
 
 
 def _hash(provider: str, seg: Segment) -> int:
-    return hash((provider, seg.key))
+    """Deterministic across processes, unlike ``hash()``, so an index could be persisted."""
+    h = hashlib.blake2b(digest_size=16)
+    for part in (provider, seg.kind, seg.role or "", seg.block or "", seg.text):
+        h.update(part.encode("utf-8"))
+        h.update(b"\0")
+    return int.from_bytes(h.digest(), "big")
 
 
 def _anchors(provider: str, segments: list[Segment]) -> list[int]:
@@ -147,6 +161,32 @@ def truncated(prev: list[Segment], new: list[Segment]) -> bool:
     return False
 
 
+def edited(prev: list[Segment], new: list[Segment]) -> bool:
+    """True if ``new`` is ``prev``'s conversation with some history blocks rewritten.
+
+    Same opener, head near, body not shorter, and most of the old blocks still
+    present in order (old tool results truncated, a turn summarised). Two
+    conversations that merely share an opener diverge on every later block and
+    fail the share test.
+    """
+    prev_head, prev_body = split(prev)
+    new_head, new_body = split(new)
+    if len(prev_body) < 2 or len(new_body) < len(prev_body):
+        return False
+    if not prev_body[0].same(new_body[0]) or not head_near(prev_head, new_head):
+        return False
+    j = 0
+    matched = 0
+    for p in prev_body:
+        k = j
+        while k < len(new_body) and not p.same(new_body[k]):
+            k += 1
+        if k < len(new_body):  # found later on: keep it, skip what was rewritten
+            matched += 1
+            j = k + 1
+    return matched / len(prev_body) >= EDITED_MIN_SHARE
+
+
 @dataclass(slots=True)
 class SessionIndex:
     """Assigns a session id to each incoming request."""
@@ -184,6 +224,14 @@ class SessionIndex:
             if s.explicit or at - s.last_at > self.max_gap_seconds or s.anchor0 == first:
                 continue
             if truncated(s.segments, segments):
+                self._touch(sid, provider, segments, at, explicit=False)
+                return sid
+
+        for sid in candidates:
+            s = self._open[sid]
+            if s.explicit or at - s.last_at > self.max_gap_seconds or s.anchor0 != first:
+                continue
+            if edited(s.segments, segments):
                 self._touch(sid, provider, segments, at, explicit=False)
                 return sid
 

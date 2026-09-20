@@ -101,18 +101,22 @@ def test_openai_recurring_partial_read_is_reported_each_time() -> None:
     assert breaks == 4 and F.PREFIX_BROKEN in found
 
 
-def test_openai_full_read_still_softens() -> None:
-    sysm = {"role": "system", "content": "S" * 6000}
-    records = [
-        rec(
-            {"model": "gpt-5", "messages": [sysm, {"role": "user", "content": q}]},
-            float(i),
-            provider="openai",
-            usage=Usage(20, 0 if i == 0 else 1536, 0),
-        )
-        for i, q in enumerate(["a" * 600, "b" * 600, "c" * 600])
-    ]
-    assert codes(records)[1] == 0
+def test_openai_full_read_softens_only_when_the_whole_prefix_was_read() -> None:
+    """Same explicit session, divergence in the tail: softened iff cache_read covers prev."""
+    sysm = {"role": "system", "content": "S" * 6000}  # ~1500 tokens
+
+    def body(q: str) -> dict[str, Any]:
+        return {"model": "gpt-5", "messages": [sysm, {"role": "user", "content": q}]}
+
+    def run(read: int) -> int:
+        records = [
+            rec(body("a" * 600), 0.0, provider="openai", usage=Usage(1650, 0, 0), session_id="s"),
+            rec(body("b" * 600), 1.0, provider="openai", usage=Usage(150, read, 0), session_id="s"),
+        ]
+        return analyze(records).totals.breaks
+
+    assert run(1536) == 0  # read >= ~1650 - 128: the tail alone changed
+    assert run(1024) == 1  # a stable partial read is a real break
 
 
 # D. CL014 vs CL005 depending on whether the head is marked

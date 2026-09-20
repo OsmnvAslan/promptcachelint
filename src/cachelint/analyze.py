@@ -220,7 +220,10 @@ class Analyzer:
         head = [s for s in report.segments if s.kind != "message"]
         if not head or not provider.explicit_markers:
             return []
-        key = (provider.name, tuple(s.key for s in head))
+        # Caches are model-scoped and thinking/effort changes invalidate them too,
+        # so requests under a different scope are a different cache.
+        scope = tuple(sorted(provider.scope(report.record.body).items()))
+        key = (provider.name, scope, tuple(s.key for s in head))
         prev = self._last_by_head.get(key)
         self._last_by_head[key] = report
         u = report.usage
@@ -263,9 +266,9 @@ class Analyzer:
                         "requests with the same tools+system write cache but never read it back"
                     ),
                     hint=(
-                        "The only marker sits after per-request content, so every request "
-                        "writes a distinct entry. Add a marker on the last system block so the "
-                        "shared head is read."
+                        "The cache marker (explicit, or the automatic one on the last block) "
+                        "lands after per-request content, so every request writes a distinct "
+                        "entry. Add a marker on the last system block so the shared head is read."
                     ),
                 )
             ]
@@ -337,6 +340,15 @@ def _window_slid(prev: list[Segment], new: list[Segment], diff: PrefixDiff) -> b
     return any(p.same(new_body[0]) for p in prev_body[1:])
 
 
+def _history_edited(prev: list[Segment], new: list[Segment], diff: PrefixDiff) -> bool:
+    """The break is inside the message body, the opener matches and the body did not shrink."""
+    prev_body = [s for s in prev if s.kind == "message"]
+    new_body = [s for s in new if s.kind == "message"]
+    if diff.kind != "message" or len(prev_body) < 2 or len(new_body) < len(prev_body):
+        return False
+    return prev_body[0].same(new_body[0])
+
+
 def positions(segments: Iterable[Segment]) -> int:
     """Cache positions in a run of segments.
 
@@ -405,6 +417,7 @@ def session_findings(
             )
         else:
             slid = _window_slid(prev.segments, segments, diff)
+            edited = not slid and _history_edited(prev.segments, segments, diff)
             out.append(
                 F.Finding(
                     code=F.PREFIX_BROKEN,
@@ -421,6 +434,11 @@ def session_findings(
                         "summarise only at a breakpoint you control), or accept that only the "
                         "head is cached."
                         if slid
+                        else "A block inside the history was rewritten (typically an old tool "
+                        "result truncated or a turn summarised). Every request after the "
+                        "edit re-bills the whole tail. Edit history only at a breakpoint you "
+                        "control, or leave old blocks as they were."
+                        if edited
                         else "Whatever changed here must be moved after the last breakpoint "
                         "or frozen."
                     ),
@@ -433,6 +451,7 @@ def session_findings(
                         "role": diff.role,
                         "common_segments": diff.common_segments,
                         "window_slid": slid,
+                        "history_edited": edited,
                     },
                 )
             )

@@ -127,10 +127,13 @@ Consecutive requests are diffed within a *session*. Two modes:
   signature of a continuation, so a tool reorder or a rewritten system prompt
   mid-conversation stays in the session and is reported. Interleaved
   conversations that share a system prompt stay apart, and so do two users who
-  both open with "hi" from their second turn on. A **sliding history window**
-  (oldest turns dropped) is recognised and reported as a prefix rewrite. What
-  automatic mode cannot follow is a history *edited* in the middle; use explicit
-  sessions for that. The report says when grouping was automatic.
+  both open with "hi" from their second turn on. Two rewrites that would
+  otherwise look like new conversations are recognised and reported as prefix
+  breaks with their own hint: a **sliding history window** (oldest turns
+  dropped; detected up to 16 blocks deep) and an **edited history** (old tool
+  results truncated, a turn summarised; detected when most of the previous
+  blocks are still there in order). The report says when grouping was automatic;
+  explicit sessions remain the reliable choice in production.
 
 ## Privacy and cost
 

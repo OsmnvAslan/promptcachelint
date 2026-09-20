@@ -10,8 +10,9 @@ Initial release.
   own text, before/after excerpts and an estimate of tokens lost.
 - Findings CL001–CL007 (session) and CL010–CL014 (single request).
 - Sessions: explicit `session()` context, or automatic grouping anchored on the
-  first message block; a continuation is a grown or repeated history, sliding
-  history windows are recognised and reported.
+  first message block; a continuation is a grown or repeated history; sliding
+  history windows and edited histories (truncated tool results) are
+  recognised and reported with their own hints.
 - `Recorder` (thread-safe) with JSONL sink and redactors (`strip_media`,
   `hash_text`), `LogWatcher` live mode sharing the offline analyzer,
   `assert_cache_stable` for tests.
