@@ -92,14 +92,14 @@ recorder.record("anthropic", body, sse_events=events, stream=True)  # streaming
 | `CL002` | Tool definitions changed between requests (tools render first: everything is invalidated). |
 | `CL003` | A top-level parameter changed: `model`, `thinking`, `output_config.effort`, `tool_choice`, `speed`, `prompt_cache_key`. |
 | `CL004` | The last breakpoint moved earlier than in the previous request. |
-| `CL005` | Prefix was identical and within TTL, but the provider read nothing. Suspects outside the payload. Informational on OpenAI, whose cache is best-effort. |
-| `CL006` | The gap since the previous request exceeds the cache TTL (Anthropic 5 min or 1 h; OpenAI about 10 min). |
+| `CL005` | Prefix (or a marked tools+system head shared across requests) was identical and within TTL, but the provider read nothing. Suspects outside the payload. Informational on OpenAI, whose cache is best-effort. |
+| `CL006` | The gap since the previous request exceeds the cache TTL (Anthropic: the longest marker's, 5 min or 1 h; OpenAI about 10 min). |
 | `CL007` | More than 20 positions appended in one turn; Anthropic's breakpoint lookback window is 20 (a run of parallel `tool_use` blocks is one position, as is a run of `tool_result` blocks). |
 | `CL010` | No `cache_control` anywhere on a prompt large enough to cache. |
 | `CL011` | Cacheable prefix below the model's minimum (512 to 4096 tokens depending on model). Estimate. |
 | `CL012` | Timestamp / UUID / random-looking id / "today is" inside the cacheable prefix. A **suspicion** from patterns; `CL001` is the confirmation. |
 | `CL013` | More than 4 `cache_control` slots (explicit markers plus the top-level automatic one). |
-| `CL014` | Requests with the same tools+system write cache and never read it: the marker sits after per-request content. |
+| `CL014` | Requests with the same, unmarked tools+system write cache and never read it: the only marker sits after per-request content. |
 
 ## What is exact and what is estimated
 
@@ -122,12 +122,15 @@ Consecutive requests are diffed within a *session*. Two modes:
 * **Explicit**: `with cachelint.session("conv-42"):` around the calls, or
   `session_id=` on `recorder.record`. Reliable; use it in production.
 * **Automatic** (default): a request continues the session whose **first message
-  block** it repeats byte for byte, provided the tools/system head is the same or
-  nearly the same (a timestamp in the system prompt must not split the
-  conversation, or the break it causes could never be seen). Interleaved
-  conversations that share a system prompt stay apart. Two conversations that
-  start with the identical first message are the one shape this cannot tell
-  apart; the report says when grouping was automatic.
+  block** it repeats byte for byte, when its message history is the previous
+  history plus new turns (or an exact retry). Growth of the history is the
+  signature of a continuation, so a tool reorder or a rewritten system prompt
+  mid-conversation stays in the session and is reported. Interleaved
+  conversations that share a system prompt stay apart, and so do two users who
+  both open with "hi" from their second turn on. A **sliding history window**
+  (oldest turns dropped) is recognised and reported as a prefix rewrite. What
+  automatic mode cannot follow is a history *edited* in the middle; use explicit
+  sessions for that. The report says when grouping was automatic.
 
 ## Privacy and cost
 

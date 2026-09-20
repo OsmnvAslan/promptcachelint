@@ -8,7 +8,6 @@ from typing import Any
 from cachelint import findings as F
 from cachelint.analyze import Analyzer
 from cachelint.model import Record
-from cachelint.sessions import SessionIndex
 
 _LEVEL = {"error": logging.WARNING, "warning": logging.WARNING, "info": logging.INFO}
 
@@ -18,14 +17,13 @@ class LogWatcher:
 
     Runs the same :class:`~cachelint.analyze.Analyzer` as the offline report,
     so a warning in the log and a line in ``cachelint report`` never disagree.
-    Pass the recorder's :class:`SessionIndex` so both see the same sessions.
+    Session ids come with the record (the recorder assigned them), so no index
+    is shared.
     """
 
-    def __init__(
-        self, logger: logging.Logger | None = None, *, index: SessionIndex | None = None
-    ) -> None:
+    def __init__(self, logger: logging.Logger | None = None) -> None:
         self.log = logger or logging.getLogger("cachelint")
-        self.analyzer = Analyzer(index)
+        self.analyzer = Analyzer()
 
     def __call__(self, record: Record) -> None:
         report = self.analyzer.step(record)

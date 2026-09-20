@@ -107,8 +107,8 @@ def test_breakpoint_moved_back_and_write_without_read() -> None:
     assert F.BREAKPOINT_MOVED_BACK in codes(report.findings)
 
     # Per-request tail marked: writes every time, never reads.
-    w1 = anthropic_body(user="unique 1", mark_last=True)
-    w2 = anthropic_body(user="unique 2", mark_last=True)
+    w1 = anthropic_body(user="unique 1", mark_system=False, mark_last=True)
+    w2 = anthropic_body(user="unique 2", mark_system=False, mark_last=True)
     report = analyze([rec(w1, 1.0, usage=Usage(0, 0, 1700)), rec(w2, 2.0, usage=Usage(0, 0, 1700))])
     assert F.WRITE_WITHOUT_READ in codes(report.findings)
 

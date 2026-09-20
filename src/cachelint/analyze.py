@@ -207,29 +207,54 @@ class Analyzer:
         return report
 
     def _head_findings(self, provider: Provider, report: RequestReport) -> list[F.Finding]:
-        """CL014 for the "shared prefix, varying question" shape.
+        """Cross-session checks for requests that share tools+system.
 
-        Such requests never share a session (their first message differs), but
-        they share tools+system. If each one writes cache and reads nothing,
-        the marker sits after the per-request part.
+        Single-turn requests with different questions never share a session,
+        but they share a head. Two shapes are diagnosable from the usage alone:
+
+        * head unmarked, marker after the per-request part: every request
+          writes, none reads (CL014);
+        * head marked and identical, yet nothing is read: an unexplained miss
+          on the head (CL005).
         """
-        head = tuple(s.key for s in report.segments if s.kind != "message")
+        head = [s for s in report.segments if s.kind != "message"]
         if not head or not provider.explicit_markers:
             return []
-        key = (provider.name, head)
+        key = (provider.name, tuple(s.key for s in head))
         prev = self._last_by_head.get(key)
         self._last_by_head[key] = report
-        u, pu = report.usage, prev.usage if prev is not None else None
-        if (
-            prev is not None
-            and u is not None
-            and pu is not None
-            and report.cacheable > len(head)
-            and u.cache_write > 0
-            and u.cache_read == 0
-            and pu.cache_write > 0
-            and pu.cache_read == 0
+        u = report.usage
+        pu = prev.usage if prev is not None else None
+        if prev is None or u is None or pu is None:
+            return []
+        if not (
+            u.cache_write > 0 and u.cache_read == 0 and pu.cache_write > 0 and pu.cache_read == 0
         ):
+            return []
+        gap = report.record.at - prev.record.at
+        if gap > provider.ttl_seconds(prev.segments):
+            return []
+        if head[-1].breakpoint:
+            expected = estimate_tokens_from_chars(sum(s.chars for s in head))
+            if expected < provider.min_prefix_tokens(report.record.model):
+                return []
+            return [
+                F.Finding(
+                    code=F.UNEXPLAINED_MISS,
+                    severity="warning",
+                    message=(
+                        f"tools+system are marked and identical to a previous request "
+                        f"(~{expected} tokens, estimate) but cache_read is 0"
+                    ),
+                    hint=(
+                        "The marked head should have been read. Suspects outside the payload: "
+                        "a different workspace/API key, thinking/effort differences, or the "
+                        "previous write never landed. On Anthropic, cache diagnostics can confirm."
+                    ),
+                    data={"expected_tokens_estimate": expected},
+                )
+            ]
+        if report.cacheable > len(head):
             return [
                 F.Finding(
                     code=F.WRITE_WITHOUT_READ,
@@ -238,8 +263,9 @@ class Analyzer:
                         "requests with the same tools+system write cache but never read it back"
                     ),
                     hint=(
-                        "The breakpoint sits after per-request content, so every request writes "
-                        "a distinct entry. Put the marker at the end of the shared part."
+                        "The only marker sits after per-request content, so every request "
+                        "writes a distinct entry. Add a marker on the last system block so the "
+                        "shared head is read."
                     ),
                 )
             ]
@@ -283,20 +309,32 @@ def _soften_for_automatic_caching(
     """On providers without markers, a divergence in the tail is not a break.
 
     OpenAI serves whatever prefix still matches, in 128-token steps. A changed
-    last message loses less than one step, and if the provider reports a cache
-    read at least as large as last time, nothing was lost at all.
+    last message loses less than one step, and if the provider reports a read
+    covering (nearly) the whole previous prefix, nothing was lost at all. A
+    *partial* read that stays stable from request to request is not a pass:
+    that is exactly what a recurring mid-prefix break looks like.
     """
     if provider.explicit_markers or not diff.broken:
         return diff
     if diff.lost_tokens_estimate < provider.cache_granularity_tokens:
         return replace(diff, broken=False)
-    if (
-        record.usage is not None
-        and prev.usage is not None
-        and record.usage.cache_read >= prev.usage.cache_read > 0
-    ):
-        return replace(diff, broken=False)
+    if record.usage is not None:
+        expected = estimate_tokens_from_chars(sum(s.chars for s in prev.segments[: prev.cacheable]))
+        if record.usage.cache_read >= expected - provider.cache_granularity_tokens > 0:
+            return replace(diff, broken=False)
     return diff
+
+
+def _window_slid(prev: list[Segment], new: list[Segment], diff: PrefixDiff) -> bool:
+    """The break is at the first message block and that block now holds a later prev block."""
+    prev_body = [s for s in prev if s.kind == "message"]
+    new_body = [s for s in new if s.kind == "message"]
+    if not prev_body or not new_body or diff.kind != "message":
+        return False
+    first_index = next(i for i, s in enumerate(prev) if s.kind == "message")
+    if diff.segment_index != first_index:
+        return False
+    return any(p.same(new_body[0]) for p in prev_body[1:])
 
 
 def positions(segments: Iterable[Segment]) -> int:
@@ -366,6 +404,7 @@ def session_findings(
                 )
             )
         else:
+            slid = _window_slid(prev.segments, segments, diff)
             out.append(
                 F.Finding(
                     code=F.PREFIX_BROKEN,
@@ -373,9 +412,18 @@ def session_findings(
                     message=(
                         f"prefix diverged at {diff.path} offset {diff.offset}; "
                         f"~{diff.lost_tokens_estimate} previously cached tokens re-billed "
-                        "(estimate)"
+                        "(estimate)" + ("; the history window slid" if slid else "")
                     ),
-                    hint="Whatever changed here must be moved after the last breakpoint or frozen.",
+                    hint=(
+                        "The history window slid: the oldest turns were dropped, so the "
+                        "message prefix is rewritten on every request and nothing after the "
+                        "system prompt can be read. Keep history append-only (compact or "
+                        "summarise only at a breakpoint you control), or accept that only the "
+                        "head is cached."
+                        if slid
+                        else "Whatever changed here must be moved after the last breakpoint "
+                        "or frozen."
+                    ),
                     path=diff.path,
                     offset=diff.offset,
                     excerpt=diff.after,
@@ -384,6 +432,7 @@ def session_findings(
                         "after": diff.after,
                         "role": diff.role,
                         "common_segments": diff.common_segments,
+                        "window_slid": slid,
                     },
                 )
             )

@@ -27,7 +27,10 @@ import logging
 from collections.abc import AsyncIterator, Callable, Iterator
 from typing import Any
 
-import httpx2 as hx
+try:
+    import httpx2 as hx
+except ImportError as exc:  # pragma: no cover - depends on the environment
+    raise ImportError("cachelint.transport needs httpx2: pip install 'cachelint[httpx2]'") from exc
 
 from cachelint.providers import detect_provider
 from cachelint.providers.base import Provider

@@ -153,11 +153,14 @@ class AnthropicProvider:
         return explicit + automatic
 
     def ttl_seconds(self, segments: list[Segment]) -> int:
-        ttl = "5m"
-        for seg in segments:
-            if seg.breakpoint and seg.ttl:
-                ttl = seg.ttl
-        return TTL_SECONDS.get(ttl, TTL_SECONDS["5m"])
+        """Longest TTL among the markers: a 1h entry on the head stays readable
+        after the 5m entry on the last turn expired."""
+        ttls = [
+            TTL_SECONDS.get(seg.ttl or "5m", TTL_SECONDS["5m"])
+            for seg in segments
+            if seg.breakpoint
+        ]
+        return max(ttls, default=TTL_SECONDS["5m"])
 
     def usage(self, response: dict[str, Any]) -> Usage | None:
         u = response.get("usage")

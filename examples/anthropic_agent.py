@@ -21,9 +21,10 @@ from cachelint.transport import wrap_transport
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-recorder = cachelint.Recorder()
-recorder.add_sink(cachelint.LogWatcher(index=recorder.index))
-recorder.add_sink(cachelint.JsonlSink("trace.jsonl", redact=strip_media))
+recorder = cachelint.Recorder(
+    cachelint.LogWatcher(),
+    cachelint.JsonlSink("trace.jsonl", redact=strip_media),
+)
 claude = anthropic.Anthropic(
     http_client=anthropic.DefaultHttpxClient(
         transport=wrap_transport(httpx2.HTTPTransport(), recorder)
