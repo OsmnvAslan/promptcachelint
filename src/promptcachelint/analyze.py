@@ -11,15 +11,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from cachelint import findings as F
-from cachelint.detectors import structure, volatile_content
-from cachelint.diff import PrefixDiff, diff_prefix
-from cachelint.model import Record, Segment, Usage, estimate_tokens_from_chars
-from cachelint.providers import get_provider
-from cachelint.providers.anthropic import SCOPE_KEYS as ANTHROPIC_SCOPE
-from cachelint.providers.base import Provider
-from cachelint.providers.openai import SCOPE_KEYS as OPENAI_SCOPE
-from cachelint.sessions import SessionIndex
+from promptcachelint import findings as F
+from promptcachelint.detectors import structure, volatile_content
+from promptcachelint.diff import PrefixDiff, diff_prefix
+from promptcachelint.model import Record, Segment, Usage, estimate_tokens_from_chars
+from promptcachelint.providers import get_provider
+from promptcachelint.providers.anthropic import SCOPE_KEYS as ANTHROPIC_SCOPE
+from promptcachelint.providers.base import Provider
+from promptcachelint.providers.openai import SCOPE_KEYS as OPENAI_SCOPE
+from promptcachelint.sessions import SessionIndex
 
 LOOKBACK_POSITIONS = 20
 
@@ -166,7 +166,7 @@ class Report:
         }
 
     def to_text(self) -> str:
-        from cachelint.render import render_text
+        from promptcachelint.render import render_text
 
         return render_text(self)
 

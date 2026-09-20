@@ -6,10 +6,10 @@ Responses call is recorded with its usage, streaming or not, without touching
 SDK internals::
 
     import anthropic, httpx2
-    import cachelint
-    from cachelint.transport import wrap_transport
+    import promptcachelint
+    from promptcachelint.transport import wrap_transport
 
-    recorder = cachelint.Recorder(cachelint.LogWatcher())
+    recorder = promptcachelint.Recorder(promptcachelint.LogWatcher())
     claude = anthropic.Anthropic(
         http_client=anthropic.DefaultHttpxClient(
             transport=wrap_transport(httpx2.HTTPTransport(), recorder)
@@ -17,7 +17,7 @@ SDK internals::
     )
 
 Nothing here ever raises into the caller: a body that cannot be parsed is
-simply not recorded (at DEBUG level in the ``cachelint.transport`` logger).
+simply not recorded (at DEBUG level in the ``promptcachelint.transport`` logger).
 """
 
 from __future__ import annotations
@@ -30,13 +30,15 @@ from typing import Any
 try:
     import httpx2 as hx
 except ImportError as exc:  # pragma: no cover - depends on the environment
-    raise ImportError("cachelint.transport needs httpx2: pip install 'cachelint[httpx2]'") from exc
+    raise ImportError(
+        "promptcachelint.transport needs httpx2: pip install 'promptcachelint[httpx2]'"
+    ) from exc
 
-from cachelint.providers import detect_provider
-from cachelint.providers.base import Provider
-from cachelint.recorder import Recorder
+from promptcachelint.providers import detect_provider
+from promptcachelint.providers.base import Provider
+from promptcachelint.recorder import Recorder
 
-log = logging.getLogger("cachelint.transport")
+log = logging.getLogger("promptcachelint.transport")
 
 
 # ----------------------------------------------------------------- parsing
@@ -113,7 +115,7 @@ def _record(
                 url=url,
             )
     except Exception:  # never break the caller's request
-        log.debug("cachelint: could not record %s", url, exc_info=True)
+        log.debug("promptcachelint: could not record %s", url, exc_info=True)
 
 
 # ----------------------------------------------------------------- streams

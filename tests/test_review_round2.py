@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from cachelint import LogWatcher, Recorder, analyze
-from cachelint import findings as F
-from cachelint.model import Record, Usage
-from cachelint.providers.anthropic import AnthropicProvider
-from cachelint.sessions import SessionIndex, continues, truncated
+from promptcachelint import LogWatcher, Recorder, analyze
+from promptcachelint import findings as F
+from promptcachelint.model import Record, Usage
+from promptcachelint.providers.anthropic import AnthropicProvider
+from promptcachelint.sessions import SessionIndex, continues, truncated
 from tests.conftest import LONG, anthropic_body, rec, tool
 
 P = AnthropicProvider()

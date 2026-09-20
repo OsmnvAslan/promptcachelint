@@ -18,6 +18,6 @@ Initial release.
   sharing the offline analyzer without history (memory bounded by active
   sessions), `assert_cache_stable` for tests, `read_trace` that skips and
   counts unreadable lines.
-- `cachelint.transport`: recording httpx2 transport (sync and async), SSE aware,
+- `promptcachelint.transport`: recording httpx2 transport (sync and async), SSE aware,
   decodes compressed responses.
 - CLI: `report`, `lint`, `codes`.

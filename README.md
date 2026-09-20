@@ -1,19 +1,19 @@
-# cachelint
+# promptcachelint
 
 Explain why your LLM prompt cache missed.
 
 Prompt caching on Anthropic and OpenAI is a prefix match: one changed byte
 anywhere before the cache marker and everything after it is billed again at
 full price. The providers tell you *that* it happened (`cache_read_input_tokens: 0`)
-but not *where*. `cachelint` records your requests, diffs each one against the
+but not *where*. `promptcachelint` records your requests, diffs each one against the
 previous request of the same conversation, and names the block, the offset and
 the characters that broke the prefix, plus the usual suspects it can see without
 history: timestamps in the system prompt, a missing marker, a prefix below
 the model's minimum.
 
 ```
-cachelint: 3 requests in 1 session(s); prompt tokens 4880 (read 0, write 4806, uncached 74); hit ratio 0.0%; 2 prefix break(s), ~3112 tokens lost (estimate)
-  (sessions grouped automatically by first message; use cachelint.session(id) for exact grouping)
+promptcachelint: 3 requests in 1 session(s); prompt tokens 4880 (read 0, write 4806, uncached 74); hit ratio 0.0%; 2 prefix break(s), ~3112 tokens lost (estimate)
+  (sessions grouped automatically by first message; use promptcachelint.session(id) for exact grouping)
 
 session 600a924e2101 [anthropic] 3 req, hit ratio 0.0%, 2 break(s)
   #0  claude-opus-5  segments=2 cacheable=2  in=24 read=0 write=1601
@@ -37,8 +37,8 @@ there is no prefix to analyse).
 ## Install
 
 ```bash
-pip install cachelint            # core: explicit recording, analysis, CLI
-pip install "cachelint[httpx2]"  # + transport that records SDK traffic automatically
+pip install promptcachelint            # core: explicit recording, analysis, CLI
+pip install "promptcachelint[httpx2]"  # + transport that records SDK traffic automatically
 ```
 
 ## Quick start
@@ -48,12 +48,12 @@ SDK's connection limits and timeouts) and wrap only the transport:
 
 ```python
 import anthropic, httpx2
-import cachelint
-from cachelint.transport import wrap_transport
+import promptcachelint
+from promptcachelint.transport import wrap_transport
 
-recorder = cachelint.Recorder(
-    cachelint.LogWatcher(),               # warn in the log the moment a prefix breaks
-    cachelint.JsonlSink("trace.jsonl"),   # keep a trace for the offline report
+recorder = promptcachelint.Recorder(
+    promptcachelint.LogWatcher(),               # warn in the log the moment a prefix breaks
+    promptcachelint.JsonlSink("trace.jsonl"),   # keep a trace for the offline report
 )
 claude = anthropic.Anthropic(
     http_client=anthropic.DefaultHttpxClient(
@@ -65,17 +65,17 @@ claude = anthropic.Anthropic(
 
 # ... run your agent as usual ...
 
-print(cachelint.analyze(recorder.records).to_text())
+print(promptcachelint.analyze(recorder.records).to_text())
 ```
 
 Then, or on a trace from production:
 
 ```bash
-cachelint report trace.jsonl              # human-readable; broken lines are skipped and counted
-cachelint report trace.jsonl --json       # machine-readable
-cachelint report trace.jsonl --fail-on CL001,CL002   # non-zero exit for CI
-cachelint lint request.json --provider anthropic     # static checks on one body
-cachelint codes
+promptcachelint report trace.jsonl              # human-readable; broken lines are skipped and counted
+promptcachelint report trace.jsonl --json       # machine-readable
+promptcachelint report trace.jsonl --fail-on CL001,CL002   # non-zero exit for CI
+promptcachelint lint request.json --provider anthropic     # static checks on one body
+promptcachelint codes
 ```
 
 No SDK, or a gateway of your own? Record explicitly:
@@ -120,7 +120,7 @@ labelled as such everywhere.
 
 Consecutive requests are diffed within a *session*. Two modes:
 
-* **Explicit**: `with cachelint.session("conv-42"):` around the calls, or
+* **Explicit**: `with promptcachelint.session("conv-42"):` around the calls, or
   `session_id=` on `recorder.record`. Reliable; use it in production.
 * **Automatic** (default): a request continues the session whose **first message
   block** it repeats byte for byte, when its message history is the previous
@@ -142,9 +142,9 @@ A trace contains full prompts. Before it leaves the machine, pass a redactor to
 the sink:
 
 ```python
-from cachelint.redact import strip_media, hash_text
-cachelint.JsonlSink("trace.jsonl", redact=strip_media)  # drop base64 images/PDFs, keep text
-cachelint.JsonlSink("trace.jsonl", redact=hash_text)    # keep structure and sizes only
+from promptcachelint.redact import strip_media, hash_text
+promptcachelint.JsonlSink("trace.jsonl", redact=strip_media)  # drop base64 images/PDFs, keep text
+promptcachelint.JsonlSink("trace.jsonl", redact=hash_text)    # keep structure and sizes only
 ```
 
 With `hash_text` every text becomes its SHA-256 digest repeated or cut to the
@@ -157,7 +157,7 @@ for unlimited, `0` for a pure live setup that only feeds sinks). `LogWatcher`
 runs the analyzer without history: one request per session is remembered for
 the diff, and sessions idle for six hours are dropped, so a long-running process
 holds memory proportional to its active conversations, not to its lifetime
-traffic. The offline report (`analyze`, `cachelint report`) keeps everything for
+traffic. The offline report (`analyze`, `promptcachelint report`) keeps everything for
 the trace it is given.
 
 **CPU.** Recording runs on the caller's thread right after the response body
@@ -168,7 +168,7 @@ prompts, record from a worker instead of the transport.
 ## In tests
 
 ```python
-from cachelint.testing import assert_cache_stable
+from promptcachelint.testing import assert_cache_stable
 
 def test_agent_keeps_its_cache(recorder):
     run_agent(http_client=...)
@@ -180,7 +180,7 @@ def test_agent_keeps_its_cache(recorder):
 Register an adapter for a proxy that speaks a known dialect on another host:
 
 ```python
-from cachelint.providers import AnthropicProvider, register_provider
+from promptcachelint.providers import AnthropicProvider, register_provider
 
 class Gateway(AnthropicProvider):
     name = "gateway"

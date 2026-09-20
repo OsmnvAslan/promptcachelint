@@ -1,4 +1,4 @@
-"""``cachelint`` command line: report over a JSONL trace, or lint one request."""
+"""``promptcachelint`` command line: report over a JSONL trace, or lint one request."""
 
 from __future__ import annotations
 
@@ -7,16 +7,16 @@ import json
 import sys
 from pathlib import Path
 
-from cachelint import findings as F
-from cachelint.analyze import analyze
-from cachelint.detectors import lint_request
-from cachelint.model import estimate_tokens_from_chars
-from cachelint.providers import get_provider, provider_names
-from cachelint.recorder import read_trace
+from promptcachelint import findings as F
+from promptcachelint.analyze import analyze
+from promptcachelint.detectors import lint_request
+from promptcachelint.model import estimate_tokens_from_chars
+from promptcachelint.providers import get_provider, provider_names
+from promptcachelint.recorder import read_trace
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="cachelint", description=__doc__)
+    parser = argparse.ArgumentParser(prog="promptcachelint", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     rep = sub.add_parser("report", help="analyze a recorded JSONL trace")
@@ -49,7 +49,7 @@ def _report(args: argparse.Namespace) -> int:
     trace = read_trace(args.trace)
     if not trace.records:
         reason = f"; {len(trace.skipped)} unreadable line(s)" if trace.skipped else ""
-        print(f"cachelint: no records in {args.trace}{reason}", file=sys.stderr)
+        print(f"promptcachelint: no records in {args.trace}{reason}", file=sys.stderr)
         return 2
     report = analyze(trace.records)
     if args.json:
@@ -60,7 +60,7 @@ def _report(args: argparse.Namespace) -> int:
         if trace.skipped:
             shown = ", ".join(f"{n} ({r})" for n, r in trace.skipped[:3])
             more = f" and {len(trace.skipped) - 3} more" if len(trace.skipped) > 3 else ""
-            print(f"cachelint: {len(trace.skipped)} line(s) skipped: {shown}{more}")
+            print(f"promptcachelint: {len(trace.skipped)} line(s) skipped: {shown}{more}")
         print(report.to_text())
     fail_on = {c.strip() for c in args.fail_on.split(",") if c.strip()}
     return 1 if any(f.code in fail_on for f in report.findings) else 0
@@ -70,7 +70,7 @@ def _lint(args: argparse.Namespace) -> int:
     try:
         provider = get_provider(args.provider)
     except ValueError as exc:
-        print(f"cachelint: {exc}", file=sys.stderr)
+        print(f"promptcachelint: {exc}", file=sys.stderr)
         return 2
     raw = sys.stdin.read() if args.request == "-" else Path(args.request).read_text("utf-8")
     body = json.loads(raw)
@@ -83,11 +83,11 @@ def _lint(args: argparse.Namespace) -> int:
         minimum = provider.min_prefix_tokens(body.get("model"))
         if total < minimum:
             print(
-                f"cachelint: no findings (prompt is ~{total} tokens, below the {minimum}-token "
+                f"promptcachelint: no findings (prompt is ~{total} tokens, below the {minimum}-token "
                 "cacheable minimum for this model; nothing here can be cached either way)"
             )
         else:
-            print("cachelint: no findings")
+            print("promptcachelint: no findings")
     else:
         for f in findings:
             where = f" at {f.path}+{f.offset}" if f.path else ""

@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from cachelint.model import Record, Usage
+from promptcachelint.model import Record, Usage
 
 LONG = "You are a meticulous assistant. " * 200  # ~6.4k chars ≈ 1.6k tokens
 

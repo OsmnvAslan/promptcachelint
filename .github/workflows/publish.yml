@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/cachelint/
+      url: https://pypi.org/project/promptcachelint/
     permissions:
       id-token: write
     steps:
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/cachelint/
+      url: https://test.pypi.org/project/promptcachelint/
     permissions:
       id-token: write
     steps:

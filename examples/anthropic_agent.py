@@ -1,9 +1,9 @@
-"""A tool-using agent loop with cachelint watching the cache.
+"""A tool-using agent loop with promptcachelint watching the cache.
 
 Run with ANTHROPIC_API_KEY set:  uv run --with anthropic examples/anthropic_agent.py
 
 The system prompt deliberately interpolates the current time so the second turn
-breaks the prefix; cachelint logs CL012 on the first request and CL001 on the
+breaks the prefix; promptcachelint logs CL012 on the first request and CL001 on the
 second, then the final report shows where the bytes diverged.
 """
 
@@ -15,15 +15,15 @@ import logging
 import anthropic
 import httpx2
 
-import cachelint
-from cachelint.redact import strip_media
-from cachelint.transport import wrap_transport
+import promptcachelint
+from promptcachelint.redact import strip_media
+from promptcachelint.transport import wrap_transport
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-recorder = cachelint.Recorder(
-    cachelint.LogWatcher(),
-    cachelint.JsonlSink("trace.jsonl", redact=strip_media),
+recorder = promptcachelint.Recorder(
+    promptcachelint.LogWatcher(),
+    promptcachelint.JsonlSink("trace.jsonl", redact=strip_media),
 )
 claude = anthropic.Anthropic(
     http_client=anthropic.DefaultHttpxClient(
@@ -53,7 +53,7 @@ def system_prompt() -> list[dict[str, object]]:
 
 
 messages: list[dict[str, object]] = []
-with cachelint.session("demo"):
+with promptcachelint.session("demo"):
     for question in ("Weather in Lisbon?", "And in Porto?"):
         messages.append({"role": "user", "content": question})
         response = claude.messages.create(
@@ -66,4 +66,4 @@ with cachelint.session("demo"):
         messages.append({"role": "assistant", "content": response.content})
 
 print()
-print(cachelint.analyze(recorder.records).to_text())
+print(promptcachelint.analyze(recorder.records).to_text())

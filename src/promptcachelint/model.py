@@ -79,7 +79,7 @@ class Record:
     model: str | None = None
     usage: Usage | None = None
     session_id: str | None = None
-    #: True when the id came from the caller (``cachelint.session`` / ``session_id=``),
+    #: True when the id came from the caller (``promptcachelint.session`` / ``session_id=``),
     #: False when the recorder assigned it by prefix similarity.
     session_explicit: bool = False
     stream: bool = False

@@ -6,10 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from cachelint import findings as F
-from cachelint.model import Segment, estimate_tokens_from_chars
-from cachelint.providers.anthropic import MAX_BREAKPOINTS
-from cachelint.providers.base import Provider
+from promptcachelint import findings as F
+from promptcachelint.model import Segment, estimate_tokens_from_chars
+from promptcachelint.providers.anthropic import MAX_BREAKPOINTS
+from promptcachelint.providers.base import Provider
 
 
 @dataclass(frozen=True, slots=True)

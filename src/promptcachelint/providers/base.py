@@ -1,11 +1,11 @@
-"""Provider protocol: everything cachelint knows about one API lives behind it."""
+"""Provider protocol: everything promptcachelint knows about one API lives behind it."""
 
 from __future__ import annotations
 
 import json
 from typing import Any, Protocol, runtime_checkable
 
-from cachelint.model import Segment, Usage
+from promptcachelint.model import Segment, Usage
 
 
 def canonical(value: Any) -> str:

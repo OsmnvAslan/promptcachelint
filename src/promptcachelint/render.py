@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from cachelint import findings as F
+from promptcachelint import findings as F
 
 if TYPE_CHECKING:
-    from cachelint.analyze import Report, RequestReport
+    from promptcachelint.analyze import Report, RequestReport
 
 
 def _pct(x: float) -> str:
@@ -51,7 +51,7 @@ def render_text(report: Report) -> str:
     lines: list[str] = []
     t = report.totals
     lines.append(
-        f"cachelint: {t.requests} requests in {len(report.sessions)} session(s); "
+        f"promptcachelint: {t.requests} requests in {len(report.sessions)} session(s); "
         f"prompt tokens {t.prompt_tokens} (read {t.cache_read}, write {t.cache_write}, "
         f"uncached {t.input_tokens}); hit ratio {_pct(t.hit_ratio)}; "
         f"{t.breaks} prefix break(s), ~{t.lost_tokens_estimate} tokens lost (estimate)"
@@ -60,7 +60,7 @@ def render_text(report: Report) -> str:
         lines.append(f"  ({t.requests - t.with_usage} request(s) without usage data)")
     if report.auto_grouped:
         lines.append(
-            "  (sessions grouped automatically by first message; use cachelint.session(id) "
+            "  (sessions grouped automatically by first message; use promptcachelint.session(id) "
             "for exact grouping)"
         )
     for s in report.sessions:

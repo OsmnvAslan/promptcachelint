@@ -9,11 +9,11 @@ from typing import Any
 import httpx2 as hx
 import pytest
 
-from cachelint import LogWatcher, Recorder, analyze, load_jsonl, read_trace
-from cachelint.analyze import Analyzer
-from cachelint.cli import main
-from cachelint.redact import hash_text
-from cachelint.transport import client
+from promptcachelint import LogWatcher, Recorder, analyze, load_jsonl, read_trace
+from promptcachelint.analyze import Analyzer
+from promptcachelint.cli import main
+from promptcachelint.redact import hash_text
+from promptcachelint.transport import client
 from tests.conftest import anthropic_body, rec
 
 # 1. hash_text: short texts stay distinct

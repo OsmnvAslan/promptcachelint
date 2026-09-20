@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
-from cachelint.model import Record, Redactor, Usage
-from cachelint.providers import get_provider
-from cachelint.sessions import SessionIndex, current_session
+from promptcachelint.model import Record, Redactor, Usage
+from promptcachelint.providers import get_provider
+from promptcachelint.sessions import SessionIndex, current_session
 
 Sink = Callable[[Record], None]
 
@@ -22,7 +22,7 @@ class JsonlSink:
     """Append one JSON object per record to a file (or any text stream).
 
     ``redact`` transforms the request body before it is written; see
-    :mod:`cachelint.redact` for ``strip_media`` and ``hash_text``.
+    :mod:`promptcachelint.redact` for ``strip_media`` and ``hash_text``.
     """
 
     def __init__(self, target: str | Path | TextIO, *, redact: Redactor | None = None) -> None:
@@ -53,7 +53,7 @@ class Recorder:
     The last ``keep`` records stay in memory (``recorder.records``; default
     10 000, ``None`` for unlimited, ``0`` for a pure live setup that only feeds
     sinks) and every record goes to the sinks. Session ids come from
-    ``cachelint.session(...)`` when active, otherwise from the automatic prefix
+    ``promptcachelint.session(...)`` when active, otherwise from the automatic prefix
     grouping. Safe to share between threads.
 
     Recording runs on the caller's thread (for the transport: right after the
@@ -134,7 +134,7 @@ def read_trace(source: str | Path | Iterable[str]) -> Trace:
     line is normal; an unknown provider or a record without a body is skipped
     too. Skipped lines are reported, never fatal.
     """
-    from cachelint.providers import provider_names
+    from promptcachelint.providers import provider_names
 
     lines: Iterator[str]
     if isinstance(source, str | Path):

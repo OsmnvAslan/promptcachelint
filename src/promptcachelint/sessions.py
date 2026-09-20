@@ -1,6 +1,6 @@
 """Grouping requests into sessions.
 
-Two modes: explicit (``with cachelint.session("id"):`` or ``Record.session_id``)
+Two modes: explicit (``with promptcachelint.session("id"):`` or ``Record.session_id``)
 and automatic. Automatic grouping is a heuristic and the report says so.
 
 The automatic rule: a request continues a session when its **first message
@@ -37,10 +37,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
-from cachelint.model import Segment
+from promptcachelint.model import Segment
 
 _current: contextvars.ContextVar[str | None] = contextvars.ContextVar(
-    "cachelint_session", default=None
+    "promptcachelint_session", default=None
 )
 
 

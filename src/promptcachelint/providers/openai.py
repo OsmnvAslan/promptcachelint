@@ -12,8 +12,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from cachelint.model import Segment, SegmentKind, Usage
-from cachelint.providers.base import canonical
+from promptcachelint.model import Segment, SegmentKind, Usage
+from promptcachelint.providers.base import canonical
 
 _URL = re.compile(r"/v1/(chat/completions|responses)(?:\?|$)")
 

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from cachelint import Recorder, analyze
-from cachelint import findings as F
-from cachelint.model import Usage
-from cachelint.providers.anthropic import AnthropicProvider
-from cachelint.sessions import ANCHOR_BLOCKS, SessionIndex, _hash, edited
+from promptcachelint import Recorder, analyze
+from promptcachelint import findings as F
+from promptcachelint.model import Usage
+from promptcachelint.providers.anthropic import AnthropicProvider
+from promptcachelint.sessions import ANCHOR_BLOCKS, SessionIndex, _hash, edited
 from tests.conftest import LONG, anthropic_body, rec
 
 P = AnthropicProvider()
@@ -208,7 +208,7 @@ def test_canned_greeting_after_hi_does_not_merge_conversations() -> None:
 
 
 def test_hash_text_keeps_lengths_so_estimates_and_cl011_stay_right() -> None:
-    from cachelint.redact import hash_text
+    from promptcachelint.redact import hash_text
 
     a, b = anthropic_body(system=LONG + "v1"), anthropic_body(system=LONG + "v2")
     plain = analyze([rec(a, 1.0), rec(b, 2.0)])

@@ -9,14 +9,14 @@ from typing import Any
 
 import httpx2 as hx
 
-from cachelint import Recorder, analyze
-from cachelint import findings as F
-from cachelint.analyze import positions
-from cachelint.diff import diff_prefix
-from cachelint.model import Segment, Usage
-from cachelint.providers.anthropic import AnthropicProvider
-from cachelint.redact import hash_text, strip_media
-from cachelint.transport import client, parse_sse
+from promptcachelint import Recorder, analyze
+from promptcachelint import findings as F
+from promptcachelint.analyze import positions
+from promptcachelint.diff import diff_prefix
+from promptcachelint.model import Segment, Usage
+from promptcachelint.providers.anthropic import AnthropicProvider
+from promptcachelint.redact import hash_text, strip_media
+from promptcachelint.transport import client, parse_sse
 from tests.conftest import LONG, anthropic_body, rec, tool
 
 P = AnthropicProvider()
@@ -229,7 +229,7 @@ def test_parallel_tool_calls_do_not_trigger_lookback_warning() -> None:
 def test_top_level_cache_control_counts_as_a_slot() -> None:
     marked = [tool(n) | {"cache_control": {"type": "ephemeral"}} for n in "abc"]
     body = anthropic_body(tools=marked, mark_system=True, top_level=True)
-    from cachelint.detectors import lint_request
+    from promptcachelint.detectors import lint_request
 
     assert F.TOO_MANY_BREAKPOINTS in {f.code for f in lint_request(P, body)}
 
@@ -280,7 +280,7 @@ def test_redaction_helpers() -> None:
 
 
 def test_jsonl_sink_redacts(tmp_path: Any) -> None:
-    from cachelint import JsonlSink, load_jsonl
+    from promptcachelint import JsonlSink, load_jsonl
 
     path = tmp_path / "t.jsonl"
     r = Recorder(JsonlSink(path, redact=hash_text))

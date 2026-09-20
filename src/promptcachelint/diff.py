@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from cachelint.model import Segment, estimate_tokens_from_chars
+from promptcachelint.model import Segment, estimate_tokens_from_chars
 
 EXCERPT = 60
 

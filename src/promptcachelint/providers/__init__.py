@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from cachelint.providers.anthropic import AnthropicProvider
-from cachelint.providers.base import Provider, canonical
-from cachelint.providers.openai import OpenAIProvider
+from promptcachelint.providers.anthropic import AnthropicProvider
+from promptcachelint.providers.base import Provider, canonical
+from promptcachelint.providers.openai import OpenAIProvider
 
 _REGISTRY: dict[str, Provider] = {
     "anthropic": AnthropicProvider(),

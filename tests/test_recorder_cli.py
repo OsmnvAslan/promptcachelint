@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cachelint import (
+from promptcachelint import (
     JsonlSink,
     LogWatcher,
     Recorder,
@@ -17,7 +17,7 @@ from cachelint import (
     load_jsonl,
     session,
 )
-from cachelint.cli import main
+from promptcachelint.cli import main
 from tests.conftest import LONG, anthropic_body
 
 
@@ -94,7 +94,7 @@ def test_assert_cache_stable() -> None:
 
 
 def test_log_watcher_logs_breaks_once_and_static_once(caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.DEBUG, logger="cachelint")
+    caplog.set_level(logging.DEBUG, logger="promptcachelint")
     r = Recorder(LogWatcher())
     with session("s"):
         r.record("anthropic", anthropic_body(system="short " + "2026-09-20T10:00:00Z"))
@@ -131,7 +131,7 @@ def test_cli_report_and_lint(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "CL010" in capsys.readouterr().out
     req.write_text(json.dumps(anthropic_body()))
     assert main(["lint", str(req), "--provider", "anthropic"]) == 0
-    assert capsys.readouterr().out.strip() == "cachelint: no findings"
+    assert capsys.readouterr().out.strip() == "promptcachelint: no findings"
     req.write_text(json.dumps(anthropic_body(system="tiny", mark_system=False)))
     assert main(["lint", str(req), "--provider", "anthropic"]) == 0
     assert "below the" in capsys.readouterr().out

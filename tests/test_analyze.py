@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from cachelint import findings as F
-from cachelint.analyze import analyze
-from cachelint.model import Usage
-from cachelint.sessions import SessionIndex
+from promptcachelint import findings as F
+from promptcachelint.analyze import analyze
+from promptcachelint.model import Usage
+from promptcachelint.sessions import SessionIndex
 from tests.conftest import LONG, anthropic_body, rec, tool
 
 

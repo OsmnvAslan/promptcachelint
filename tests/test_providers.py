@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from cachelint.model import Usage
-from cachelint.providers import detect_provider, get_provider, register_provider
-from cachelint.providers.anthropic import AnthropicProvider
-from cachelint.providers.openai import OpenAIProvider
+from promptcachelint.model import Usage
+from promptcachelint.providers import detect_provider, get_provider, register_provider
+from promptcachelint.providers.anthropic import AnthropicProvider
+from promptcachelint.providers.openai import OpenAIProvider
 from tests.conftest import anthropic_body, tool
 
 

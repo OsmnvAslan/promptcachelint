@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from cachelint import findings as F
-from cachelint.detectors import lint_request, volatile_content
-from cachelint.diff import diff_prefix
-from cachelint.model import Segment
-from cachelint.providers.anthropic import AnthropicProvider
+from promptcachelint import findings as F
+from promptcachelint.detectors import lint_request, volatile_content
+from promptcachelint.diff import diff_prefix
+from promptcachelint.model import Segment
+from promptcachelint.providers.anthropic import AnthropicProvider
 from tests.conftest import anthropic_body, tool
 
 P = AnthropicProvider()

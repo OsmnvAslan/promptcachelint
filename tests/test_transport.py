@@ -6,8 +6,8 @@ from typing import Any
 import httpx2 as hx
 import pytest
 
-from cachelint import Recorder
-from cachelint.transport import async_client, client, parse_sse, wrap_transport
+from promptcachelint import Recorder
+from promptcachelint.transport import async_client, client, parse_sse, wrap_transport
 from tests.conftest import anthropic_body
 
 ANTHROPIC = "https://api.anthropic.com/v1/messages"
@@ -135,7 +135,7 @@ def test_unparseable_bodies_never_break_the_request() -> None:
 
 def test_sdk_style_usage_matches_recorder_sessions() -> None:
     """Two growing turns through the transport land in one session with an intact prefix."""
-    from cachelint import analyze
+    from promptcachelint import analyze
 
     recorder = Recorder()
     history: list[dict[str, Any]] = []
