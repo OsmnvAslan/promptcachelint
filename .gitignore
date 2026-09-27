@@ -16,3 +16,4 @@ wheels/
 
 # Traces
 trace.jsonl
+trace*.jsonl
