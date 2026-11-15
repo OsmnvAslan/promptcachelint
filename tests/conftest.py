@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from promptcachelint import analyze
 from promptcachelint.model import Record, Usage
 
 LONG = "You are a meticulous assistant. " * 200  # ~6.4k chars ≈ 1.6k tokens
@@ -68,6 +69,21 @@ def rec(
         session_id=session_id,
         session_explicit=session_id is not None,
     )
+
+
+def convo(who: str, turn: int, **kw: Any) -> dict[str, Any]:
+    """Request number `turn` of a growing conversation whose texts are unique to `who`."""
+    history: list[dict[str, Any]] = []
+    for i in range(turn):
+        history.append({"role": "user", "content": [{"type": "text", "text": f"{who} q{i}"}]})
+        history.append({"role": "assistant", "content": f"a{i}"})
+    return anthropic_body(history=history, user=f"{who} q{turn}", mark_last=True, **kw)
+
+
+def outcome(records: list[Record]) -> tuple[int, int, set[str]]:
+    """Session count, prefix breaks and finding codes of an analysis."""
+    report = analyze(records)
+    return len(report.sessions), report.totals.breaks, {f.code for f in report.findings}
 
 
 @pytest.fixture
